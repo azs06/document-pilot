@@ -20,12 +20,10 @@ export interface AnalyzeDatasetRequest {
 export interface VisualizationPlan {
   chartType: ChartType;
   title: string;
-  xField: string;
-  yField?: string;
-  derivedMetric?: 'goal_difference';
   sort: SortOrder;
   maxPoints: number;
   reason: string;
+  transformCode: string;
 }
 
 export interface AnalyzeDatasetResponse {

@@ -93,9 +93,6 @@ type SelectedInput =
   | { kind: 'pdf'; file: File; fileName: string };
 
 const STORAGE_KEY = 'document-pilot.ui.v1';
-const GOALS_FOR_ALIASES = ['goals_for', 'goals for', 'gf', 'goals scored', 'for'];
-const GOALS_AGAINST_ALIASES = ['goals_against', 'goals against', 'ga', 'goals conceded', 'against'];
-
 const DEFAULT_SETTINGS: AppSettings = {
   model: 'gpt-5-mini',
   reasoningEffort: 'high',
@@ -159,37 +156,12 @@ function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
 }
 
-function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[_-]+/g, ' ');
-}
-
 function toNumber(value: Cell): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
     const maybe = Number(value);
     if (Number.isFinite(maybe)) return maybe;
   }
-  return undefined;
-}
-
-function toLabel(value: Cell, fallback: string): string {
-  if (value === null || value === undefined || value === '') return fallback;
-  return String(value);
-}
-
-function detectColumn(headers: string[], aliases: string[]): string | undefined {
-  const normalized = headers.map((header) => ({ header, normalized: normalize(header) }));
-
-  for (const alias of aliases) {
-    const exact = normalized.find((item) => item.normalized === normalize(alias));
-    if (exact) return exact.header;
-  }
-
-  for (const alias of aliases) {
-    const partial = normalized.find((item) => item.normalized.includes(normalize(alias)));
-    if (partial) return partial.header;
-  }
-
   return undefined;
 }
 
@@ -349,37 +321,41 @@ function buildSummary(dataset: Dataset): DatasetSummary {
   };
 }
 
-function buildPoints(dataset: Dataset, plan: VisualizationPlan): Point[] {
+function executeTransformCode(dataset: Dataset, transformCode: string): Point[] {
+  const fn = new Function('rows', 'headers', transformCode) as (
+    rows: DataRow[],
+    headers: string[]
+  ) => unknown;
+
+  const result = fn(dataset.rows, dataset.headers);
+
+  if (!Array.isArray(result)) {
+    throw new Error('transformCode did not return an array.');
+  }
+
   const points: Point[] = [];
-  const xField = plan.xField;
-
-  if (plan.derivedMetric === 'goal_difference') {
-    const goalsFor = detectColumn(dataset.headers, GOALS_FOR_ALIASES);
-    const goalsAgainst = detectColumn(dataset.headers, GOALS_AGAINST_ALIASES);
-
-    if (!goalsFor || !goalsAgainst) {
-      throw new Error('Goal difference requested, but goal columns were not found in the dataset.');
-    }
-
-    for (let i = 0; i < dataset.rows.length; i += 1) {
-      const row = dataset.rows[i];
-      const gf = toNumber(row[goalsFor]);
-      const ga = toNumber(row[goalsAgainst]);
-      if (gf === undefined || ga === undefined) continue;
-      points.push({ label: toLabel(row[xField], `Row ${i + 1}`), value: gf - ga });
-    }
-  } else {
-    if (!plan.yField) {
-      throw new Error('No numeric field selected for plotting.');
-    }
-
-    for (let i = 0; i < dataset.rows.length; i += 1) {
-      const row = dataset.rows[i];
-      const value = toNumber(row[plan.yField]);
-      if (value === undefined) continue;
-      points.push({ label: toLabel(row[xField], `Row ${i + 1}`), value });
+  for (let i = 0; i < result.length; i += 1) {
+    const item = result[i] as Record<string, unknown> | null;
+    if (
+      item !== null &&
+      typeof item === 'object' &&
+      typeof item.label === 'string' &&
+      typeof item.value === 'number' &&
+      Number.isFinite(item.value)
+    ) {
+      points.push({ label: item.label, value: item.value });
     }
   }
+
+  if (points.length === 0) {
+    throw new Error('transformCode returned no valid {label, value} points.');
+  }
+
+  return points;
+}
+
+function resolvePoints(dataset: Dataset, plan: VisualizationPlan): Point[] {
+  const points = executeTransformCode(dataset, plan.transformCode);
 
   if (plan.sort === 'asc') points.sort((a, b) => a.value - b.value);
   if (plan.sort === 'desc') points.sort((a, b) => b.value - a.value);
@@ -406,7 +382,7 @@ function renderChart(plan: VisualizationPlan, points: Point[]): void {
 
   const labels = points.map((point) => point.label);
   const values = points.map((point) => point.value);
-  const datasetLabel = plan.derivedMetric === 'goal_difference' ? 'Goal Difference' : plan.yField ?? 'Value';
+  const datasetLabel = plan.title;
   const colors = palette(values.length, 0.75);
   const borders = palette(values.length, 1);
 
@@ -1069,7 +1045,7 @@ async function sendPrompt(): Promise<void> {
         reasoningEffort: settings.reasoningEffort
       });
 
-      const points = buildPoints(selectedInput.dataset, response.plan);
+      const points = resolvePoints(selectedInput.dataset, response.plan);
       const renderStart = performance.now();
       renderChart(response.plan, points);
       const renderMs = Number((performance.now() - renderStart).toFixed(2));

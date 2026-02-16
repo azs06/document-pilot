@@ -79,6 +79,44 @@ function extractErrorMessage(error: unknown): string {
   return 'Unable to connect to Copilot SDK.';
 }
 
+function buildGoalDifferenceCode(xField: string, goalsForCol: string, goalsAgainstCol: string): string {
+  return [
+    'const totals = new Map();',
+    'for (const row of rows) {',
+    `  const label = String(row[${JSON.stringify(xField)}] ?? "");`,
+    `  const gf = Number(row[${JSON.stringify(goalsForCol)}]) || 0;`,
+    `  const ga = Number(row[${JSON.stringify(goalsAgainstCol)}]) || 0;`,
+    '  totals.set(label, (totals.get(label) || 0) + (gf - ga));',
+    '}',
+    'return Array.from(totals, ([label, value]) => ({ label, value }));'
+  ].join('\n');
+}
+
+function buildAggregateCode(xField: string, yField: string): string {
+  return [
+    'const totals = new Map();',
+    'for (const row of rows) {',
+    `  const label = String(row[${JSON.stringify(xField)}] ?? "");`,
+    `  const value = Number(row[${JSON.stringify(yField)}]) || 0;`,
+    '  totals.set(label, (totals.get(label) || 0) + value);',
+    '}',
+    'return Array.from(totals, ([label, value]) => ({ label, value }));'
+  ].join('\n');
+}
+
+function buildNoAggregateCode(xField: string, yField: string): string {
+  return [
+    'const points = [];',
+    'for (let i = 0; i < rows.length; i++) {',
+    '  const row = rows[i];',
+    `  const label = String(row[${JSON.stringify(xField)}] ?? ("Row " + (i + 1)));`,
+    `  const value = Number(row[${JSON.stringify(yField)}]);`,
+    '  if (Number.isFinite(value)) points.push({ label, value });',
+    '}',
+    'return points;'
+  ].join('\n');
+}
+
 function fallbackPlan(input: AnalyzeDatasetRequest): AnalyzeDatasetResponse {
   const startedAt = performance.now();
   const { headers, numericColumns } = input.dataset;
@@ -88,46 +126,47 @@ function fallbackPlan(input: AnalyzeDatasetRequest): AnalyzeDatasetResponse {
   const xField = detectField(headers, TEAM_ALIASES) ?? headers[0] ?? 'Category';
   const yField = pickPromptMatchedField(input.prompt, numericColumns) ?? numericColumns[0];
 
-  let plan: VisualizationPlan = {
-    chartType: lowerPrompt.includes('trend') || lowerPrompt.includes('over time') ? 'line' : 'bar',
-    title: 'Generated chart',
-    xField,
-    yField,
-    sort: 'desc',
-    maxPoints: 20,
-    reason: 'Fallback planner used due to unavailable Copilot response.'
-  };
+  const needsAggregation = input.dataset.rowCount > input.dataset.sampleRows.length ||
+    lowerPrompt.includes('total') || lowerPrompt.includes('top') || lowerPrompt.includes('by');
+
+  let chartType: VisualizationPlan['chartType'] =
+    lowerPrompt.includes('trend') || lowerPrompt.includes('over time') ? 'line' : 'bar';
+  let sort: VisualizationPlan['sort'] = 'desc';
+  let maxPoints = 20;
+  let title = 'Generated chart';
+  let reason = 'Fallback planner used due to unavailable Copilot response.';
+  let transformCode: string;
 
   if (lowerPrompt.includes('goal difference')) {
-    plan = {
-      chartType: 'bar',
-      title: 'Premier League Goal Difference',
-      xField,
-      derivedMetric: 'goal_difference',
-      sort: 'desc',
-      maxPoints: 20,
-      reason: 'Goal difference requested in prompt.'
-    };
+    const goalsForCol = detectField(headers, GOALS_FOR_ALIASES);
+    const goalsAgainstCol = detectField(headers, GOALS_AGAINST_ALIASES);
+
+    if (goalsForCol && goalsAgainstCol) {
+      transformCode = buildGoalDifferenceCode(xField, goalsForCol, goalsAgainstCol);
+      title = 'Goal Difference';
+      reason = 'Goal difference requested in prompt.';
+    } else {
+      transformCode = yField
+        ? buildAggregateCode(xField, yField)
+        : buildNoAggregateCode(xField, numericColumns[0] ?? headers[1] ?? headers[0]);
+      reason = 'Goal columns were not detected. Switched to numeric fallback.';
+    }
   } else if (lowerPrompt.includes('share') || lowerPrompt.includes('composition')) {
-    plan.chartType = 'doughnut';
-    plan.sort = 'none';
-    plan.maxPoints = 8;
-  }
-
-  const hasGoalColumns =
-    detectField(headers, GOALS_FOR_ALIASES) && detectField(headers, GOALS_AGAINST_ALIASES);
-
-  if (plan.derivedMetric === 'goal_difference' && !hasGoalColumns) {
-    plan = {
-      ...plan,
-      derivedMetric: undefined,
-      yField: yField ?? numericColumns[0],
-      reason: 'Goal columns were not detected. Switched to numeric fallback.'
-    };
+    chartType = 'doughnut';
+    sort = 'none';
+    maxPoints = 8;
+    transformCode = yField
+      ? buildAggregateCode(xField, yField)
+      : buildNoAggregateCode(xField, numericColumns[0] ?? headers[1] ?? headers[0]);
+  } else if (needsAggregation && yField) {
+    transformCode = buildAggregateCode(xField, yField);
+  } else {
+    const numCol = yField ?? numericColumns[0] ?? headers[1] ?? headers[0];
+    transformCode = buildNoAggregateCode(xField, numCol);
   }
 
   return {
-    plan,
+    plan: { chartType, title, sort, maxPoints, reason, transformCode },
     source: 'fallback',
     model,
     latencyMs: Number((performance.now() - startedAt).toFixed(2)),
@@ -145,15 +184,7 @@ function extractJsonObject(content: string): string {
 }
 
 function sanitizePlan(input: AnalyzeDatasetRequest, parsed: Partial<VisualizationPlan>): VisualizationPlan {
-  const headers = input.dataset.headers;
-  const numericColumns = input.dataset.numericColumns;
-
   const fallback = fallbackPlan(input).plan;
-
-  const maxPoints =
-    typeof parsed.maxPoints === 'number' && Number.isFinite(parsed.maxPoints)
-      ? Math.max(5, Math.min(100, Math.floor(parsed.maxPoints)))
-      : fallback.maxPoints;
 
   const chartType: VisualizationPlan['chartType'] =
     parsed.chartType === 'bar' ||
@@ -166,29 +197,20 @@ function sanitizePlan(input: AnalyzeDatasetRequest, parsed: Partial<Visualizatio
   const sort: VisualizationPlan['sort'] =
     parsed.sort === 'asc' || parsed.sort === 'desc' || parsed.sort === 'none' ? parsed.sort : fallback.sort;
 
-  const xField =
-    typeof parsed.xField === 'string' && headers.includes(parsed.xField) ? parsed.xField : fallback.xField;
+  const maxPoints =
+    typeof parsed.maxPoints === 'number' && Number.isFinite(parsed.maxPoints)
+      ? Math.max(5, Math.min(100, Math.floor(parsed.maxPoints)))
+      : fallback.maxPoints;
 
-  const yField =
-    typeof parsed.yField === 'string' && numericColumns.includes(parsed.yField)
-      ? parsed.yField
-      : fallback.yField;
+  const title = typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title : fallback.title;
+  const reason = typeof parsed.reason === 'string' && parsed.reason.trim().length > 0 ? parsed.reason : fallback.reason;
 
-  const derivedMetric = parsed.derivedMetric === 'goal_difference' ? 'goal_difference' : undefined;
+  const transformCode =
+    typeof parsed.transformCode === 'string' && parsed.transformCode.trim().length > 0
+      ? parsed.transformCode
+      : fallback.transformCode;
 
-  const safeTitle = typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title : fallback.title;
-  const safeReason = typeof parsed.reason === 'string' && parsed.reason.trim().length > 0 ? parsed.reason : fallback.reason;
-
-  return {
-    chartType,
-    title: safeTitle,
-    xField,
-    yField,
-    derivedMetric,
-    sort,
-    maxPoints,
-    reason: safeReason
-  };
+  return { chartType, title, sort, maxPoints, reason, transformCode };
 }
 
 function buildRelevantPdfExcerpt(prompt: string, text: string): string {
@@ -348,19 +370,33 @@ export class CopilotPlanner {
         '{',
         '  "chartType": "bar" | "line" | "pie" | "doughnut",',
         '  "title": "string",',
-        '  "xField": "string",',
-        '  "yField": "string optional",',
-        '  "derivedMetric": "goal_difference" optional,',
         '  "sort": "asc" | "desc" | "none",',
         '  "maxPoints": number,',
-        '  "reason": "string"',
+        '  "reason": "string",',
+        '  "transformCode": "string (required - JavaScript function body)"',
         '}',
         '',
         'Rules:',
-        '- Use only fields present in dataset headers.',
-        '- If user asks for goal difference, set derivedMetric="goal_difference".',
+        '- transformCode is ALWAYS required. It is a JavaScript function BODY receiving two arguments: rows and headers.',
+        '  - rows: Array<Record<string, string | number | boolean | null>> — every row of the dataset.',
+        '  - headers: string[] — column names.',
+        '  - Must return Array<{label: string, value: number}>.',
+        '  - Use only plain JavaScript. No imports, no DOM, no fetch, no async.',
+        '- Use only column names present in the dataset headers.',
         '- Prefer bar for ranking, line for time trends, doughnut/pie for share with few categories.',
         '- Keep maxPoints between 5 and 100.',
+        '',
+        'Example transformCode for "total goals scored per team" with match-level data having HomeTeam/FTHG/AwayTeam/FTAG:',
+        'const totals = new Map();',
+        'for (const row of rows) {',
+        '  const home = String(row["HomeTeam"] ?? "");',
+        '  const away = String(row["AwayTeam"] ?? "");',
+        '  const hg = Number(row["FTHG"]) || 0;',
+        '  const ag = Number(row["FTAG"]) || 0;',
+        '  totals.set(home, (totals.get(home) || 0) + hg);',
+        '  totals.set(away, (totals.get(away) || 0) + ag);',
+        '}',
+        'return Array.from(totals, ([label, value]) => ({ label, value }));',
         '',
         `User prompt: ${input.prompt}`,
         `Dataset summary JSON: ${JSON.stringify(input.dataset)}`
