@@ -1,0 +1,5 @@
+node_modules
+dist-electron
+dist-renderer
+.DS_Store
+npm-debug.log*

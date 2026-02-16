@@ -1,0 +1,306 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply m-0 min-h-screen text-slate-100 antialiased;
+    font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(60rem 28rem at 6% -8%, rgba(20, 184, 166, 0.2), transparent 58%),
+      radial-gradient(64rem 30rem at 96% -12%, rgba(56, 189, 248, 0.16), transparent 60%),
+      linear-gradient(165deg, #020617 0%, #0b1220 48%, #020617 100%);
+  }
+
+  textarea,
+  input,
+  select,
+  button {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .app-shell {
+    @apply grid min-h-screen grid-cols-[320px_1fr] lg:grid-cols-[320px_1fr];
+  }
+
+  .sidebar {
+    @apply flex flex-col gap-4 border-r border-slate-800/80 bg-slate-950/70 p-4 backdrop-blur-xl;
+  }
+
+  .brand {
+    @apply flex items-center gap-3 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)];
+  }
+
+  .brand-mark {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-cyan-500 text-sm font-bold tracking-wide text-slate-950;
+  }
+
+  .brand h1 {
+    @apply m-0 text-lg font-semibold leading-tight;
+  }
+
+  .brand p {
+    @apply m-0 text-sm text-slate-400;
+  }
+
+  .sidebar-actions {
+    @apply grid grid-cols-2 gap-2;
+  }
+
+  .section-head {
+    @apply px-1 pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500;
+  }
+
+  .project-list {
+    @apply flex flex-1 flex-col gap-3 overflow-auto pr-1;
+  }
+
+  .project-card {
+    @apply rounded-xl border border-slate-800/90 bg-slate-900/70 p-3 shadow-[0_8px_20px_rgba(0,0,0,0.22)];
+  }
+
+  .project-head {
+    @apply flex items-center justify-between gap-2;
+  }
+
+  .project-title-btn {
+    @apply m-0 cursor-pointer border-0 bg-transparent p-0 text-left text-sm font-semibold text-slate-100 hover:text-cyan-300;
+  }
+
+  .project-tools {
+    @apply flex gap-1;
+  }
+
+  .session-list {
+    @apply mt-2 flex flex-col gap-1.5;
+  }
+
+  .session-btn {
+    @apply flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-left text-sm text-slate-300 transition hover:border-slate-600 hover:text-slate-100;
+  }
+
+  .session-btn.active {
+    @apply border-cyan-400/60 bg-cyan-400/10 text-cyan-200;
+  }
+
+  .session-time {
+    @apply text-xs text-slate-500;
+  }
+
+  .workspace {
+    @apply grid grid-rows-[auto_auto_1fr_auto] gap-3 p-4;
+  }
+
+  .workspace-head {
+    @apply flex items-start justify-between gap-4 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 shadow-[0_10px_30px_rgba(0,0,0,0.28)];
+  }
+
+  .workspace-head h2 {
+    @apply m-0 text-xl font-semibold;
+  }
+
+  .workspace-head p {
+    @apply m-0 mt-1 text-sm text-slate-400;
+  }
+
+  .runtime-indicator {
+    @apply rounded-full border border-cyan-400/35 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-200;
+  }
+
+  .chart-panel {
+    @apply rounded-2xl border border-slate-800/80 bg-slate-900/70 p-3 shadow-[0_8px_22px_rgba(0,0,0,0.2)];
+    min-height: 280px;
+  }
+
+  .chart-panel.hidden {
+    @apply hidden;
+  }
+
+  .chat-log {
+    @apply flex flex-col gap-3 overflow-auto rounded-2xl border border-slate-800/80 bg-slate-950/45 p-4 shadow-[0_8px_22px_rgba(0,0,0,0.25)];
+  }
+
+  .auth-gate {
+    @apply grid gap-2 rounded-2xl border border-amber-400/35 bg-amber-300/8 p-4;
+  }
+
+  .auth-gate.hidden {
+    @apply hidden;
+  }
+
+  .auth-gate h3 {
+    @apply m-0 text-base font-semibold text-amber-100;
+  }
+
+  .auth-gate p {
+    @apply m-0 text-sm text-amber-200/90;
+  }
+
+  .auth-hint {
+    @apply leading-relaxed text-amber-200/80;
+  }
+
+  .auth-hint code {
+    @apply rounded bg-amber-100/15 px-1.5 py-0.5 text-amber-100;
+  }
+
+  .msg {
+    @apply max-w-[85%] rounded-2xl border border-slate-800 px-3 py-2.5 text-sm leading-relaxed whitespace-pre-wrap;
+  }
+
+  .msg.user {
+    @apply ml-auto border-cyan-400/25 bg-cyan-500/12 text-cyan-50;
+  }
+
+  .msg.assistant {
+    @apply bg-slate-900/85 text-slate-100;
+  }
+
+  .msg.system {
+    @apply border-violet-400/25 bg-violet-500/10 text-violet-100;
+  }
+
+  .msg-meta {
+    @apply mt-1.5 text-xs text-slate-400;
+  }
+
+  .composer {
+    @apply grid gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/70 p-3 shadow-[0_8px_22px_rgba(0,0,0,0.24)];
+  }
+
+  .composer.locked {
+    @apply pointer-events-none opacity-50;
+  }
+
+  .composer-top {
+    @apply flex items-center gap-2;
+  }
+
+  .file-chip {
+    @apply max-w-[42%] truncate rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-300;
+  }
+
+  .status {
+    @apply ml-auto text-xs font-medium text-amber-300;
+  }
+
+  textarea {
+    @apply w-full resize-y rounded-xl border border-slate-700 bg-slate-950/85 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/35;
+    min-height: 92px;
+  }
+
+  .composer-bottom {
+    @apply grid grid-cols-[auto_1fr_auto] items-center gap-2;
+  }
+
+  .composer-config {
+    @apply flex flex-wrap gap-1.5;
+  }
+
+  .chip {
+    @apply rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1 text-xs text-slate-300;
+  }
+
+  .metrics {
+    @apply truncate text-right text-xs text-slate-400;
+  }
+
+  button.primary,
+  button.ghost {
+    @apply rounded-xl px-3 py-2 text-sm font-medium transition;
+  }
+
+  button.primary {
+    @apply border-0 bg-gradient-to-br from-teal-400 to-cyan-500 text-slate-950 shadow-[0_6px_20px_rgba(56,189,248,0.35)] hover:from-teal-300 hover:to-cyan-400;
+  }
+
+  button.ghost {
+    @apply border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-slate-500 hover:text-slate-50;
+  }
+
+  button:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+
+  .modal {
+    @apply fixed inset-0 grid place-items-center bg-slate-950/55 p-4;
+  }
+
+  .modal.hidden {
+    @apply hidden;
+  }
+
+  .modal-card {
+    @apply grid w-full max-w-2xl gap-4 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.45)];
+  }
+
+  .modal-card header,
+  .modal-card footer {
+    @apply flex items-center justify-between;
+  }
+
+  .modal-card h3 {
+    @apply m-0 text-lg font-semibold;
+  }
+
+  .modal-card h4 {
+    @apply m-0 mb-2 text-sm font-semibold uppercase tracking-[0.12em] text-slate-400;
+  }
+
+  .field {
+    @apply mb-2.5 grid gap-1.5;
+  }
+
+  .field span {
+    @apply text-sm text-slate-400;
+  }
+
+  input,
+  select {
+    @apply w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/35;
+  }
+
+  .hint {
+    @apply m-0 text-xs text-slate-500;
+  }
+
+  .sr-only {
+    @apply absolute h-px w-px overflow-hidden whitespace-nowrap border-0 p-0;
+    clip-path: inset(50%);
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    @apply border-r-0 border-b;
+    max-height: 42vh;
+  }
+
+  .workspace {
+    @apply grid-rows-[auto_auto_minmax(220px,1fr)_auto];
+  }
+
+  .msg {
+    max-width: 100%;
+  }
+
+  .composer-bottom {
+    @apply grid-cols-1;
+  }
+
+  .metrics {
+    @apply text-left;
+  }
+}

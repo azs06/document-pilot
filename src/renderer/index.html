@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document Pilot</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">DP</span>
+          <div>
+            <h1>Document Pilot</h1>
+            <p>Agent Workspace</p>
+          </div>
+        </div>
+
+        <div class="sidebar-actions">
+          <button id="new-project" type="button" class="ghost">New Project</button>
+          <button id="open-settings" type="button" class="ghost">Settings</button>
+        </div>
+
+        <div class="section-head">
+          <span>Projects / Threads</span>
+        </div>
+        <div id="project-list" class="project-list"></div>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-head">
+          <div>
+            <h2 id="session-title">New Session</h2>
+            <p id="session-subtitle">Start by attaching a file and asking a question.</p>
+          </div>
+          <div class="runtime-indicator" id="runtime-indicator">Model: gpt-5-mini | Reasoning: high</div>
+        </header>
+
+        <section id="chart-panel" class="chart-panel hidden" aria-label="Chart output">
+          <canvas id="chart"></canvas>
+        </section>
+
+        <section id="chat-log" class="chat-log" aria-live="polite"></section>
+
+        <section id="auth-gate" class="auth-gate hidden" aria-live="polite">
+          <h3>GitHub Login Required</h3>
+          <p id="auth-message">Checking authentication...</p>
+          <p class="auth-hint">
+            To continue, sign in with GitHub Copilot in your terminal (for example: <code>copilot auth login</code>), then click
+            recheck.
+          </p>
+          <button id="recheck-auth" type="button" class="primary">Recheck Login</button>
+        </section>
+
+        <footer class="composer">
+          <div class="composer-top">
+            <input
+              id="file-input"
+              type="file"
+              accept=".csv,.xlsx,.xlsm,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              hidden
+            />
+            <button id="attach-file" type="button" class="ghost">Attach File</button>
+            <span id="file-chip" class="file-chip">No file attached</span>
+            <span id="status" class="status">Ready.</span>
+          </div>
+
+          <label class="sr-only" for="prompt">Prompt</label>
+          <textarea id="prompt" rows="4" placeholder="Ask about the attached file..."></textarea>
+
+          <div class="composer-bottom">
+            <div class="composer-config">
+              <span id="model-chip" class="chip">Model: gpt-5-mini</span>
+              <span id="reasoning-chip" class="chip">Reasoning: high</span>
+            </div>
+            <div id="metrics" class="metrics"></div>
+            <button id="send" type="button" class="primary">Send</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-card">
+        <header>
+          <h3 id="settings-title">Settings</h3>
+          <button id="close-settings" type="button" class="ghost">Close</button>
+        </header>
+
+        <section>
+          <h4>Model</h4>
+          <label class="field">
+            <span>Model Name</span>
+            <input id="settings-model" type="text" value="gpt-5-mini" />
+          </label>
+          <label class="field">
+            <span>Reasoning Effort</span>
+            <select id="settings-reasoning">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high" selected>High</option>
+              <option value="xhigh">XHigh</option>
+            </select>
+          </label>
+        </section>
+
+        <section>
+          <h4>Keyboard Shortcuts</h4>
+          <label class="field">
+            <span>Send Message</span>
+            <input id="shortcut-send" type="text" value="Meta+Enter" />
+          </label>
+          <label class="field">
+            <span>New Session</span>
+            <input id="shortcut-new-session" type="text" value="Meta+Shift+N" />
+          </label>
+          <p class="hint">Use Mac-style shortcuts (Meta, Shift, Alt, Ctrl + Key).</p>
+        </section>
+
+        <footer>
+          <button id="save-settings" type="button" class="primary">Save Settings</button>
+        </footer>
+      </div>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
