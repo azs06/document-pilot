@@ -74,10 +74,11 @@ export interface ChatMessageData {
   meta?: string;
 }
 
-export interface SessionMetadata {
+export interface ThreadMetadata {
   id: string;
   title: string;
   messages: ChatMessageData[];
+  documents: StoredDocument[];
   activeDocumentId: string | null;
   lastUpdated: number;
 }
@@ -86,23 +87,14 @@ export interface ProjectMetadata {
   id: string;
   name: string;
   documents: StoredDocument[];
-  sessions: SessionMetadata[];
+  threads: ThreadMetadata[];
   createdAt: number;
   updatedAt: number;
 }
 
-export interface GlobalThread {
-  id: string;
-  title: string;
-  messages: ChatMessageData[];
-  documents: StoredDocument[];
-  activeDocumentId: string | null;
-  lastUpdated: number;
-}
-
 export interface KeyboardShortcuts {
   sendMessage: string;
-  newSession: string;
+  newThread: string;
 }
 
 export interface AppSettings {
@@ -113,9 +105,9 @@ export interface AppSettings {
 
 export interface AppState {
   projectIndex: Array<{ id: string; name: string; updatedAt: number }>;
-  globalThreads: GlobalThread[];
+  threads: ThreadMetadata[];
   activeProjectId: string | null;
-  activeSessionId: string;
+  activeThreadId: string;
   settings: AppSettings;
 }
 

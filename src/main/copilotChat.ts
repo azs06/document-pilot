@@ -16,6 +16,7 @@ const LOG_LEVELS = ['none', 'error', 'warning', 'info', 'debug', 'all'] as const
 type CopilotLogLevel = (typeof LOG_LEVELS)[number];
 
 const MAX_PDF_CONTEXT_CHARS = 20_000;
+const MAX_TABULAR_CONTEXT_CHARS = 120_000;
 const MAX_HISTORY_MESSAGES = 10;
 
 class AuthRequiredError extends Error {
@@ -82,6 +83,13 @@ function buildRelevantPdfExcerpt(prompt: string, text: string): string {
 
   const merged = ranked.map((chunk) => chunk.text).join('\n\n');
   return merged.slice(0, MAX_PDF_CONTEXT_CHARS);
+}
+
+function buildTabularExcerpt(text: string): string {
+  if (text.length <= MAX_TABULAR_CONTEXT_CHARS) return text;
+  const truncated = text.slice(0, MAX_TABULAR_CONTEXT_CHARS);
+  const lastNewline = truncated.lastIndexOf('\n');
+  return lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated;
 }
 
 function buildFallbackAnswer(prompt: string, excerpt: string): string {
@@ -210,8 +218,12 @@ export class CopilotChat {
       throw new AuthRequiredError(`GitHub login required: ${auth.statusMessage}`);
     }
 
-    if (auth.modelAvailable === false) {
-      throw new AuthRequiredError(`Selected model "${auth.model}" is not available for this account.`);
+    if (auth.modelAvailable !== true) {
+      throw new AuthRequiredError(
+        auth.modelAvailable === false
+          ? `Selected model "${auth.model}" is not available for this account.`
+          : `Could not verify model "${auth.model}" availability. Check your Copilot subscription.`
+      );
     }
   }
 
@@ -270,7 +282,9 @@ export class CopilotChat {
       }
     }
 
-    const excerpt = buildRelevantPdfExcerpt(input.prompt, documentText);
+    const excerpt = input.document.kind === 'tabular'
+      ? buildTabularExcerpt(documentText)
+      : buildRelevantPdfExcerpt(input.prompt, documentText);
 
     if (!excerpt) {
       return {
@@ -331,12 +345,13 @@ export class CopilotChat {
         throw error;
       }
 
+      const reason = error instanceof Error ? error.message : 'Unknown error';
       return {
         answer: buildFallbackAnswer(input.prompt, excerpt),
         source: 'fallback',
         model,
         latencyMs: Number((performance.now() - startedAt).toFixed(2)),
-        warning: 'Copilot response failed, using document excerpt as fallback.'
+        warning: `Copilot response failed: ${reason}`
       };
     }
   }

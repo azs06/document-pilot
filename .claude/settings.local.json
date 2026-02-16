@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run typecheck:*)"
+      "Bash(npm run typecheck:*)",
+      "WebSearch",
+      "Bash(npm install:*)"
     ]
   }
 }

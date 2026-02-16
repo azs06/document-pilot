@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>Document Pilot</title>
   </head>
   <body>
@@ -37,8 +40,8 @@
       <main class="workspace">
         <header class="workspace-head">
           <div>
-            <h2 id="session-title">New Session</h2>
-            <p id="session-subtitle">Start by attaching a file and asking a question.</p>
+            <h2 id="thread-title">New Thread</h2>
+            <p id="thread-subtitle">Start by attaching a file and asking a question.</p>
           </div>
           <div class="runtime-indicator" id="runtime-indicator">Model: gpt-5-mini | Reasoning: high</div>
         </header>
@@ -120,8 +123,8 @@
             <input id="shortcut-send" type="text" value="Meta+Enter" />
           </label>
           <label class="field">
-            <span>New Session</span>
-            <input id="shortcut-new-session" type="text" value="Meta+Shift+N" />
+            <span>New Thread</span>
+            <input id="shortcut-new-thread" type="text" value="Meta+Shift+N" />
           </label>
           <p class="hint">Use Mac-style shortcuts (Meta, Shift, Alt, Ctrl + Key).</p>
         </section>

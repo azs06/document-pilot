@@ -1,5 +1,29 @@
 import Papa, { type ParseResult } from 'papaparse';
 import './styles.css';
+
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import hljs from 'highlight.js/lib/core';
+import 'highlight.js/styles/github-dark.css';
+
+// Register only languages relevant to data-analysis context
+import javascript from 'highlight.js/lib/languages/javascript';
+import python from 'highlight.js/lib/languages/python';
+import sql from 'highlight.js/lib/languages/sql';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import xml from 'highlight.js/lib/languages/xml';
+import css from 'highlight.js/lib/languages/css';
+import plaintext from 'highlight.js/lib/languages/plaintext';
+
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('plaintext', plaintext);
 import type {
   AppSettings,
   AppState,
@@ -8,11 +32,10 @@ import type {
   ConversationMessage,
   CopilotAuthStatusResponse,
   DocumentContext,
-  GlobalThread,
   ProjectMetadata,
   ReasoningEffort,
-  SessionMetadata,
-  StoredDocument
+  StoredDocument,
+  ThreadMetadata
 } from '../shared/contracts.js';
 
 type Cell = string | number | boolean | null;
@@ -47,8 +70,8 @@ type SelectedInput =
   | { kind: 'stored-pdf'; fileData: ArrayBuffer; fileName: string; docId: string };
 
 type ActiveContext =
-  | { kind: 'project'; projectId: string; sessionId: string }
-  | { kind: 'global-thread'; threadId: string };
+  | { kind: 'project'; projectId: string; threadId: string }
+  | { kind: 'thread'; threadId: string };
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -58,11 +81,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   reasoningEffort: 'high',
   shortcuts: {
     sendMessage: 'Meta+Enter',
-    newSession: 'Meta+Shift+N'
+    newThread: 'Meta+Shift+N'
   }
 };
 
-const MAX_TEXT_CONTENT_ROWS = 200;
+const MAX_TEXT_CONTENT_ROWS = 5000;
 
 // ── DOM Elements ──────────────────────────────────────────────────
 
@@ -73,8 +96,8 @@ const sendButton = requireElement<HTMLButtonElement>('#send');
 const statusEl = requireElement<HTMLSpanElement>('#status');
 const metricsEl = requireElement<HTMLDivElement>('#metrics');
 const fileChipEl = requireElement<HTMLSpanElement>('#file-chip');
-const sessionTitleEl = requireElement<HTMLHeadingElement>('#session-title');
-const sessionSubtitleEl = requireElement<HTMLParagraphElement>('#session-subtitle');
+const threadTitleEl = requireElement<HTMLHeadingElement>('#thread-title');
+const threadSubtitleEl = requireElement<HTMLParagraphElement>('#thread-subtitle');
 const runtimeIndicatorEl = requireElement<HTMLDivElement>('#runtime-indicator');
 const modelChipEl = requireElement<HTMLSpanElement>('#model-chip');
 const reasoningChipEl = requireElement<HTMLSpanElement>('#reasoning-chip');
@@ -99,7 +122,7 @@ const saveSettingsButton = requireElement<HTMLButtonElement>('#save-settings');
 const settingsModelInput = requireElement<HTMLInputElement>('#settings-model');
 const settingsReasoningSelect = requireElement<HTMLSelectElement>('#settings-reasoning');
 const shortcutSendInput = requireElement<HTMLInputElement>('#shortcut-send');
-const shortcutNewSessionInput = requireElement<HTMLInputElement>('#shortcut-new-session');
+const shortcutNewThreadInput = requireElement<HTMLInputElement>('#shortcut-new-thread');
 
 const confirmModalEl = requireElement<HTMLDivElement>('#confirm-modal');
 const confirmMessageEl = requireElement<HTMLParagraphElement>('#confirm-message');
@@ -110,7 +133,7 @@ const confirmOkButton = requireElement<HTMLButtonElement>('#confirm-ok');
 
 let appState: AppState | null = null;
 let activeProject: ProjectMetadata | null = null;
-let activeContext: ActiveContext = { kind: 'project', projectId: '', sessionId: '' };
+let activeContext: ActiveContext = { kind: 'project', projectId: '', threadId: '' };
 let lastParseMs = 0;
 let authGateState: AuthGateState = { checking: true, status: null };
 let desktopApiCache: Partial<DocumentPilotApi> | null = null;
@@ -173,6 +196,40 @@ function escapeHtml(value: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+// ── Markdown Rendering ────────────────────────────────────────────
+
+const renderer = new marked.Renderer();
+
+renderer.code = function ({ text, lang }) {
+  const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+  const highlighted = hljs.highlight(text, { language }).value;
+  const langLabel = lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : '';
+  return `<div class="code-block">${langLabel}<pre><code class="hljs language-${escapeHtml(language)}">${highlighted}</code></pre></div>`;
+};
+
+renderer.link = function ({ href, title, text }) {
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<a href="${escapeHtml(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+};
+
+marked.use({
+  renderer,
+  gfm: true,
+  breaks: true,
+  hooks: {
+    postprocess(html) {
+      return html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>');
+    }
+  }
+});
+
+function renderMarkdown(content: string): string {
+  const rawHtml = marked.parse(content) as string;
+  return DOMPurify.sanitize(rawHtml, {
+    ADD_ATTR: ['target'],
+  });
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -489,55 +546,45 @@ function saveAll(): void {
 
 // ── Getters ───────────────────────────────────────────────────────
 
-function getActiveThread(): GlobalThread | null {
-  if (activeContext.kind !== 'global-thread' || !appState) return null;
-  const threadId = activeContext.threadId;
-  return appState.globalThreads.find((t) => t.id === threadId) ?? null;
-}
-
-function getActiveSession(): SessionMetadata | null {
-  if (activeContext.kind !== 'project' || !activeProject) return null;
-  const sessionId = activeContext.sessionId;
-  return activeProject.sessions.find((s) => s.id === sessionId) ?? null;
+function getActiveThread(): ThreadMetadata | null {
+  if (activeContext.kind === 'project') {
+    if (!activeProject) return null;
+    return activeProject.threads.find((t) => t.id === activeContext.threadId) ?? null;
+  }
+  if (!appState) return null;
+  return appState.threads.find((t) => t.id === activeContext.threadId) ?? null;
 }
 
 function getActiveMessages(): ChatMessageData[] {
-  if (activeContext.kind === 'global-thread') {
-    return getActiveThread()?.messages ?? [];
-  }
-  return getActiveSession()?.messages ?? [];
+  return getActiveThread()?.messages ?? [];
 }
 
 function getActiveDocuments(): StoredDocument[] {
-  if (activeContext.kind === 'global-thread') {
-    return getActiveThread()?.documents ?? [];
+  if (activeContext.kind === 'project') {
+    return activeProject?.documents ?? [];
   }
-  return activeProject?.documents ?? [];
+  return getActiveThread()?.documents ?? [];
 }
 
 function getActiveDocumentId(): string | null {
-  if (activeContext.kind === 'global-thread') {
-    return getActiveThread()?.activeDocumentId ?? null;
-  }
-  return getActiveSession()?.activeDocumentId ?? null;
+  return getActiveThread()?.activeDocumentId ?? null;
 }
 
 function setActiveDocumentId(docId: string | null): void {
-  if (activeContext.kind === 'global-thread') {
-    const thread = getActiveThread();
-    if (thread) thread.activeDocumentId = docId;
-  } else {
-    const session = getActiveSession();
-    if (session) session.activeDocumentId = docId;
-  }
+  const thread = getActiveThread();
+  if (thread) thread.activeDocumentId = docId;
 }
 
 // ── Rendering ─────────────────────────────────────────────────────
 
 function messageHtml(message: ChatMessageData): string {
   const cls = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
+  const roleLabel = message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Assistant' : 'System';
   const meta = message.meta ? `<div class="msg-meta">${escapeHtml(message.meta)}</div>` : '';
-  return `<article class="msg ${cls}">${escapeHtml(message.content)}${meta}</article>`;
+  const body = message.role === 'user'
+    ? escapeHtml(message.content)
+    : renderMarkdown(message.content);
+  return `<article class="msg ${cls}"><div class="msg-role">${roleLabel}</div><div class="msg-body">${body}</div>${meta}</article>`;
 }
 
 function updateRuntimeChips(): void {
@@ -572,7 +619,7 @@ function renderDocumentBar(): void {
 
 function renderProjectList(): void {
   if (!appState) return;
-  const currentSessionId = activeContext.kind === 'project' ? activeContext.sessionId : '';
+  const currentThreadId = activeContext.kind === 'project' ? activeContext.threadId : '';
 
   projectListEl.innerHTML = appState.projectIndex
     .map((entry) => {
@@ -580,18 +627,18 @@ function renderProjectList(): void {
       const docCount = isActiveProject && activeProject ? activeProject.documents.length : 0;
       const badge = docCount > 0 ? `<span class="doc-badge">${docCount}</span>` : '';
 
-      let sessionsHtml = '';
+      let threadsHtml = '';
       if (isActiveProject && activeProject) {
-        sessionsHtml = activeProject.sessions
-          .map((session) => {
-            const activeClass = session.id === currentSessionId ? 'active' : '';
+        threadsHtml = activeProject.threads
+          .map((thread) => {
+            const activeClass = thread.id === currentThreadId ? 'active' : '';
             return [
-              `<div class="session-row">`,
-              `<button class="session-btn ${activeClass}" data-action="switch-session" data-project-id="${entry.id}" data-session-id="${session.id}">`,
-              `<span>${escapeHtml(session.title)}</span>`,
-              `<span class="session-time">${formatRelativeTime(session.lastUpdated)}</span>`,
+              `<div class="thread-row">`,
+              `<button class="thread-row-btn ${activeClass}" data-action="switch-thread" data-project-id="${entry.id}" data-thread-id="${thread.id}">`,
+              `<span>${escapeHtml(thread.title)}</span>`,
+              `<span class="thread-time">${formatRelativeTime(thread.lastUpdated)}</span>`,
               '</button>',
-              `<button class="delete-btn" data-action="delete-session" data-project-id="${entry.id}" data-session-id="${session.id}" type="button">&times;</button>`,
+              `<button class="delete-btn" data-action="delete-thread" data-project-id="${entry.id}" data-thread-id="${thread.id}" type="button">&times;</button>`,
               '</div>'
             ].join('');
           })
@@ -603,11 +650,11 @@ function renderProjectList(): void {
         '<div class="project-head">',
         `<button class="project-title-btn" data-action="switch-project" data-project-id="${entry.id}">${escapeHtml(entry.name)}${badge}</button>`,
         '<div class="project-tools">',
-        `<button class="ghost ghost-sm" data-action="new-session" data-project-id="${entry.id}" type="button">+ Session</button>`,
+        `<button class="ghost ghost-sm" data-action="new-thread" data-project-id="${entry.id}" type="button">+ Thread</button>`,
         `<button class="delete-btn" data-action="delete-project" data-project-id="${entry.id}" type="button">&times;</button>`,
         '</div>',
         '</div>',
-        isActiveProject ? `<div class="session-list">${sessionsHtml}</div>` : '',
+        isActiveProject ? `<div class="thread-list">${threadsHtml}</div>` : '',
         '</div>'
       ].join('');
     })
@@ -617,9 +664,9 @@ function renderProjectList(): void {
 function renderThreadList(): void {
   if (!appState) return;
 
-  threadListEl.innerHTML = appState.globalThreads
+  threadListEl.innerHTML = appState.threads
     .map((thread) => {
-      const isActive = activeContext.kind === 'global-thread' && activeContext.threadId === thread.id;
+      const isActive = activeContext.kind === 'thread' && activeContext.threadId === thread.id;
       const activeClass = isActive ? 'active' : '';
       const docBadge = thread.documents.length > 0 ? `<span class="doc-badge">${thread.documents.length}</span>` : '';
 
@@ -628,7 +675,7 @@ function renderThreadList(): void {
         `<span>${escapeHtml(thread.title)}</span>`,
         '<span class="thread-tools">',
         docBadge,
-        `<span class="session-time">${formatRelativeTime(thread.lastUpdated)}</span>`,
+        `<span class="thread-time">${formatRelativeTime(thread.lastUpdated)}</span>`,
         `<span class="delete-btn" data-action="delete-thread" data-thread-id="${thread.id}">&times;</span>`,
         '</span>',
         '</button>'
@@ -650,22 +697,21 @@ function updateActiveInput(): void {
   }
 }
 
-function applySessionContext(): void {
+function applyContext(): void {
   const messages = getActiveMessages();
+  const thread = getActiveThread();
 
   if (activeContext.kind === 'project' && activeProject) {
-    const session = getActiveSession();
-    sessionTitleEl.textContent = session?.title ?? 'Session';
-    sessionSubtitleEl.textContent = `${activeProject.name} • ${messages.length} messages`;
-  } else if (activeContext.kind === 'global-thread') {
-    const thread = getActiveThread();
-    sessionTitleEl.textContent = thread?.title ?? 'Thread';
-    sessionSubtitleEl.textContent = `Global Thread • ${messages.length} messages`;
+    threadTitleEl.textContent = thread?.title ?? 'Thread';
+    threadSubtitleEl.textContent = `${activeProject.name} • ${messages.length} messages`;
+  } else {
+    threadTitleEl.textContent = thread?.title ?? 'Thread';
+    threadSubtitleEl.textContent = `${messages.length} messages`;
   }
 
   chatLogEl.innerHTML = '';
   if (messages.length === 0) {
-    chatLogEl.innerHTML = '<article class="msg assistant">Attach a CSV, Excel, or PDF file and ask your first question.</article>';
+    chatLogEl.innerHTML = '<article class="msg assistant"><div class="msg-role">System</div><div class="msg-body">Attach a CSV, Excel, or PDF file and ask your first question.</div></article>';
   } else {
     chatLogEl.innerHTML = messages.map((item) => messageHtml(item)).join('');
   }
@@ -744,7 +790,7 @@ async function attachDocumentToCurrentContext(file: File): Promise<void> {
     if (activeContext.kind === 'project' && activeProject) {
       activeProject.documents.push(storedDocument);
       activeProject.updatedAt = Date.now();
-    } else if (activeContext.kind === 'global-thread') {
+    } else if (activeContext.kind === 'thread') {
       const thread = getActiveThread();
       if (thread) {
         thread.documents.push(storedDocument);
@@ -767,7 +813,7 @@ async function attachDocumentToCurrentContext(file: File): Promise<void> {
     setActiveDocumentId(documentId);
 
     saveAll();
-    applySessionContext();
+    applyContext();
     setStatus(`Attached ${file.name}.`);
   } catch (error) {
     setStatus(`Failed to attach: ${(error as Error).message}`);
@@ -789,7 +835,7 @@ async function removeDocument(docId: string, storedFileName: string): Promise<vo
   if (activeContext.kind === 'project' && activeProject) {
     activeProject.documents = activeProject.documents.filter((d) => d.id !== docId);
     activeProject.updatedAt = Date.now();
-  } else if (activeContext.kind === 'global-thread') {
+  } else if (activeContext.kind === 'thread') {
     const thread = getActiveThread();
     if (thread) {
       thread.documents = thread.documents.filter((d) => d.id !== docId);
@@ -806,7 +852,7 @@ async function removeDocument(docId: string, storedFileName: string): Promise<vo
   }
 
   saveAll();
-  applySessionContext();
+  applyContext();
 }
 
 // ── Project CRUD ──────────────────────────────────────────────────
@@ -818,17 +864,18 @@ async function createProject(): Promise<void> {
   if (!name) return;
 
   const projectId = uid('project');
-  const sessionId = uid('session');
+  const threadId = uid('thread');
   const now = Date.now();
 
   const project: ProjectMetadata = {
     id: projectId,
     name,
     documents: [],
-    sessions: [{
-      id: sessionId,
-      title: 'New Session',
+    threads: [{
+      id: threadId,
+      title: 'New Thread',
       messages: [],
+      documents: [],
       activeDocumentId: null,
       lastUpdated: now
     }],
@@ -838,12 +885,12 @@ async function createProject(): Promise<void> {
 
   appState.projectIndex.unshift({ id: projectId, name, updatedAt: now });
   appState.activeProjectId = projectId;
-  appState.activeSessionId = sessionId;
+  appState.activeThreadId = threadId;
   activeProject = project;
-  activeContext = { kind: 'project', projectId, sessionId };
+  activeContext = { kind: 'project', projectId, threadId };
 
   saveAll();
-  applySessionContext();
+  applyContext();
 
   // Prompt for first document
   fileInput.click();
@@ -869,8 +916,8 @@ async function deleteProject(projectId: string): Promise<void> {
   if (activeContext.kind === 'project' && activeContext.projectId === projectId) {
     if (appState.projectIndex.length > 0) {
       void switchToProject(appState.projectIndex[0].id);
-    } else if (appState.globalThreads.length > 0) {
-      switchToThread(appState.globalThreads[0].id);
+    } else if (appState.threads.length > 0) {
+      switchToStandaloneThread(appState.threads[0].id);
     } else {
       // Create a fresh project
       await createProject();
@@ -896,13 +943,13 @@ async function switchToProject(projectId: string): Promise<void> {
   }
 
   activeProject = project;
-  const sessionId = project.sessions[0]?.id ?? '';
-  activeContext = { kind: 'project', projectId, sessionId };
+  const threadId = project.threads[0]?.id ?? '';
+  activeContext = { kind: 'project', projectId, threadId };
   appState.activeProjectId = projectId;
-  appState.activeSessionId = sessionId;
+  appState.activeThreadId = threadId;
 
   void saveAppState();
-  applySessionContext();
+  applyContext();
   setStatus('');
 
   // Pre-load active document if set
@@ -912,86 +959,87 @@ async function switchToProject(projectId: string): Promise<void> {
   }
 }
 
-function switchSession(projectId: string, sessionId: string): void {
+function switchProjectThread(projectId: string, threadId: string): void {
   if (!appState || !activeProject) return;
   if (activeContext.kind !== 'project' || activeContext.projectId !== projectId) return;
 
-  const session = activeProject.sessions.find((s) => s.id === sessionId);
-  if (!session) return;
+  const thread = activeProject.threads.find((t) => t.id === threadId);
+  if (!thread) return;
 
-  activeContext = { kind: 'project', projectId, sessionId };
-  appState.activeSessionId = sessionId;
+  activeContext = { kind: 'project', projectId, threadId };
+  appState.activeThreadId = threadId;
 
   void saveAppState();
-  applySessionContext();
+  applyContext();
 
-  // Load session's active document if needed
-  const docId = session.activeDocumentId;
+  // Load thread's active document if needed
+  const docId = thread.activeDocumentId;
   if (docId && !documentCache.has(docId)) {
     void loadAndCacheDocument(docId);
   }
 }
 
-function createSession(projectId: string): void {
+function createProjectThread(projectId: string): void {
   if (!appState || !activeProject || activeProject.id !== projectId) return;
 
-  const sessionId = uid('session');
-  const session: SessionMetadata = {
-    id: sessionId,
-    title: 'New Session',
+  const threadId = uid('thread');
+  const thread: ThreadMetadata = {
+    id: threadId,
+    title: 'New Thread',
     messages: [],
+    documents: [],
     activeDocumentId: null,
     lastUpdated: Date.now()
   };
 
-  activeProject.sessions.unshift(session);
+  activeProject.threads.unshift(thread);
   activeProject.updatedAt = Date.now();
-  activeContext = { kind: 'project', projectId, sessionId };
-  appState.activeSessionId = sessionId;
+  activeContext = { kind: 'project', projectId, threadId };
+  appState.activeThreadId = threadId;
 
-  setStatus('New session created.');
+  setStatus('New thread created.');
   saveAll();
-  applySessionContext();
+  applyContext();
 }
 
-async function deleteSession(projectId: string, sessionId: string): Promise<void> {
+async function deleteProjectThread(projectId: string, threadId: string): Promise<void> {
   if (!appState || !activeProject || activeProject.id !== projectId) return;
 
-  const session = activeProject.sessions.find((s) => s.id === sessionId);
-  if (!session) return;
+  const thread = activeProject.threads.find((t) => t.id === threadId);
+  if (!thread) return;
 
-  // Don't allow deleting the last session
-  if (activeProject.sessions.length <= 1) {
-    setStatus('Cannot delete the only session in a project.');
+  // Don't allow deleting the last thread
+  if (activeProject.threads.length <= 1) {
+    setStatus('Cannot delete the only thread in a project.');
     return;
   }
 
-  const confirmed = await showConfirm(`Delete session "${session.title}"?`);
+  const confirmed = await showConfirm(`Delete thread "${thread.title}"?`);
   if (!confirmed) return;
 
-  activeProject.sessions = activeProject.sessions.filter((s) => s.id !== sessionId);
+  activeProject.threads = activeProject.threads.filter((t) => t.id !== threadId);
   activeProject.updatedAt = Date.now();
 
-  // If we deleted the active session, switch to the first remaining one
-  if (activeContext.kind === 'project' && activeContext.sessionId === sessionId) {
-    const nextSession = activeProject.sessions[0];
-    activeContext = { kind: 'project', projectId, sessionId: nextSession.id };
-    appState.activeSessionId = nextSession.id;
+  // If we deleted the active thread, switch to the first remaining one
+  if (activeContext.kind === 'project' && activeContext.threadId === threadId) {
+    const nextThread = activeProject.threads[0];
+    activeContext = { kind: 'project', projectId, threadId: nextThread.id };
+    appState.activeThreadId = nextThread.id;
   }
 
   saveAll();
-  applySessionContext();
+  applyContext();
 }
 
-// ── Global Thread CRUD ────────────────────────────────────────────
+// ── Standalone Thread CRUD ────────────────────────────────────────
 
-function createGlobalThread(): void {
+function createStandaloneThread(): void {
   if (!appState) return;
 
   const threadId = uid('thread');
   const now = Date.now();
 
-  const thread: GlobalThread = {
+  const thread: ThreadMetadata = {
     id: threadId,
     title: 'New Thread',
     messages: [],
@@ -1000,29 +1048,29 @@ function createGlobalThread(): void {
     lastUpdated: now
   };
 
-  appState.globalThreads.unshift(thread);
+  appState.threads.unshift(thread);
   appState.activeProjectId = null;
-  appState.activeSessionId = threadId;
+  appState.activeThreadId = threadId;
   activeProject = null;
-  activeContext = { kind: 'global-thread', threadId };
+  activeContext = { kind: 'thread', threadId };
 
   void saveAppState();
-  applySessionContext();
+  applyContext();
 }
 
-function switchToThread(threadId: string): void {
+function switchToStandaloneThread(threadId: string): void {
   if (!appState) return;
 
-  const thread = appState.globalThreads.find((t) => t.id === threadId);
+  const thread = appState.threads.find((t) => t.id === threadId);
   if (!thread) return;
 
   activeProject = null;
-  activeContext = { kind: 'global-thread', threadId };
+  activeContext = { kind: 'thread', threadId };
   appState.activeProjectId = null;
-  appState.activeSessionId = threadId;
+  appState.activeThreadId = threadId;
 
   void saveAppState();
-  applySessionContext();
+  applyContext();
 
   // Load active document if needed
   const docId = thread.activeDocumentId;
@@ -1031,10 +1079,10 @@ function switchToThread(threadId: string): void {
   }
 }
 
-async function deleteThread(threadId: string): Promise<void> {
+async function deleteStandaloneThread(threadId: string): Promise<void> {
   if (!appState) return;
 
-  const thread = appState.globalThreads.find((t) => t.id === threadId);
+  const thread = appState.threads.find((t) => t.id === threadId);
   if (!thread) return;
 
   const confirmed = await showConfirm(`Delete thread "${thread.title}"?`);
@@ -1048,11 +1096,11 @@ async function deleteThread(threadId: string): Promise<void> {
     }
   }
 
-  appState.globalThreads = appState.globalThreads.filter((t) => t.id !== threadId);
+  appState.threads = appState.threads.filter((t) => t.id !== threadId);
 
-  if (activeContext.kind === 'global-thread' && activeContext.threadId === threadId) {
-    if (appState.globalThreads.length > 0) {
-      switchToThread(appState.globalThreads[0].id);
+  if (activeContext.kind === 'thread' && activeContext.threadId === threadId) {
+    if (appState.threads.length > 0) {
+      switchToStandaloneThread(appState.threads[0].id);
     } else if (appState.projectIndex.length > 0) {
       void switchToProject(appState.projectIndex[0].id);
     } else {
@@ -1075,27 +1123,20 @@ function addMessage(role: ChatMessageData['role'], content: string, meta?: strin
     meta
   };
 
-  if (activeContext.kind === 'global-thread') {
-    const thread = getActiveThread();
-    if (!thread) return;
-    thread.messages.push(msg);
-    thread.lastUpdated = Date.now();
-    if (thread.title === 'New Thread' && role === 'user') {
-      thread.title = content.slice(0, 42).trim() || 'New Thread';
-    }
-  } else {
-    const session = getActiveSession();
-    if (!session) return;
-    session.messages.push(msg);
-    session.lastUpdated = Date.now();
-    if (session.title === 'New Session' && role === 'user') {
-      session.title = content.slice(0, 42).trim() || 'New Session';
-    }
-    if (activeProject) activeProject.updatedAt = Date.now();
+  const thread = getActiveThread();
+  if (!thread) return;
+
+  thread.messages.push(msg);
+  thread.lastUpdated = Date.now();
+  if (thread.title === 'New Thread' && role === 'user') {
+    thread.title = content.slice(0, 42).trim() || 'New Thread';
+  }
+  if (activeContext.kind === 'project' && activeProject) {
+    activeProject.updatedAt = Date.now();
   }
 
   saveAll();
-  applySessionContext();
+  applyContext();
 }
 
 // ── File Attach Handler ───────────────────────────────────────────
@@ -1227,7 +1268,7 @@ function openSettings(): void {
   settingsModelInput.value = settings.model;
   settingsReasoningSelect.value = settings.reasoningEffort;
   shortcutSendInput.value = settings.shortcuts.sendMessage;
-  shortcutNewSessionInput.value = settings.shortcuts.newSession;
+  shortcutNewThreadInput.value = settings.shortcuts.newThread;
   settingsModalEl.classList.remove('hidden');
 }
 
@@ -1241,10 +1282,10 @@ function saveSettings(): void {
   const model = settingsModelInput.value.trim();
   const reasoning = settingsReasoningSelect.value;
   const sendShortcut = shortcutSendInput.value.trim();
-  const newSessionShortcut = shortcutNewSessionInput.value.trim();
+  const newThreadShortcut = shortcutNewThreadInput.value.trim();
 
   if (!model) { setStatus('Model is required.'); return; }
-  if (!parseShortcut(sendShortcut) || !parseShortcut(newSessionShortcut)) {
+  if (!parseShortcut(sendShortcut) || !parseShortcut(newThreadShortcut)) {
     setStatus('Invalid shortcut format. Use e.g. Meta+Enter.');
     return;
   }
@@ -1256,7 +1297,7 @@ function saveSettings(): void {
   appState.settings = {
     model,
     reasoningEffort: reasoning,
-    shortcuts: { sendMessage: sendShortcut, newSession: newSessionShortcut }
+    shortcuts: { sendMessage: sendShortcut, newThread: newThreadShortcut }
   };
 
   updateRuntimeChips();
@@ -1281,16 +1322,16 @@ function attachEventHandlers(): void {
 
     const action = target.getAttribute('data-action');
     const projectId = target.getAttribute('data-project-id') ?? '';
-    const sessionId = target.getAttribute('data-session-id') ?? '';
+    const threadId = target.getAttribute('data-thread-id') ?? '';
 
     if (action === 'switch-project') { void switchToProject(projectId); return; }
-    if (action === 'new-session') { createSession(projectId); return; }
-    if (action === 'switch-session') { switchSession(projectId, sessionId); return; }
-    if (action === 'delete-session') { void deleteSession(projectId, sessionId); return; }
+    if (action === 'new-thread') { createProjectThread(projectId); return; }
+    if (action === 'switch-thread') { switchProjectThread(projectId, threadId); return; }
+    if (action === 'delete-thread') { void deleteProjectThread(projectId, threadId); return; }
     if (action === 'delete-project') { void deleteProject(projectId); return; }
   });
 
-  // Thread list delegation
+  // Standalone thread list delegation
   threadListEl.addEventListener('click', (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!target) return;
@@ -1298,8 +1339,8 @@ function attachEventHandlers(): void {
     const action = target.getAttribute('data-action');
     const threadId = target.getAttribute('data-thread-id') ?? '';
 
-    if (action === 'switch-thread') { switchToThread(threadId); return; }
-    if (action === 'delete-thread') { void deleteThread(threadId); return; }
+    if (action === 'switch-thread') { switchToStandaloneThread(threadId); return; }
+    if (action === 'delete-thread') { void deleteStandaloneThread(threadId); return; }
   });
 
   // Document chips delegation
@@ -1313,7 +1354,7 @@ function attachEventHandlers(): void {
     if (action === 'select-doc') {
       setActiveDocumentId(docId);
       saveAll();
-      applySessionContext();
+      applyContext();
       if (!documentCache.has(docId)) void loadAndCacheDocument(docId);
       return;
     }
@@ -1325,7 +1366,7 @@ function attachEventHandlers(): void {
   });
 
   newProjectButton.addEventListener('click', () => { void createProject(); });
-  newThreadButton.addEventListener('click', () => createGlobalThread());
+  newThreadButton.addEventListener('click', () => createStandaloneThread());
   openSettingsButton.addEventListener('click', () => openSettings());
   closeSettingsButton.addEventListener('click', () => closeSettings());
   saveSettingsButton.addEventListener('click', () => saveSettings());
@@ -1358,12 +1399,12 @@ function attachEventHandlers(): void {
       return;
     }
 
-    if (shortcutMatches(event, settings.shortcuts.newSession)) {
+    if (shortcutMatches(event, settings.shortcuts.newThread)) {
       event.preventDefault();
       if (activeContext.kind === 'project') {
-        createSession(activeContext.projectId);
+        createProjectThread(activeContext.projectId);
       } else {
-        createGlobalThread();
+        createStandaloneThread();
       }
     }
   });
@@ -1404,14 +1445,14 @@ async function boot(): Promise<void> {
   // Step 3: Create fresh state if nothing was loaded
   if (!loadedState) {
     const projectId = uid('project');
-    const sessionId = uid('session');
+    const threadId = uid('thread');
     const now = Date.now();
 
     loadedState = {
       projectIndex: [{ id: projectId, name: 'Document Pilot', updatedAt: now }],
-      globalThreads: [],
+      threads: [],
       activeProjectId: projectId,
-      activeSessionId: sessionId,
+      activeThreadId: threadId,
       settings: { ...DEFAULT_SETTINGS }
     };
 
@@ -1420,10 +1461,11 @@ async function boot(): Promise<void> {
       id: projectId,
       name: 'Document Pilot',
       documents: [],
-      sessions: [{
-        id: sessionId,
-        title: 'New Session',
+      threads: [{
+        id: threadId,
+        title: 'New Thread',
         messages: [],
+        documents: [],
         activeDocumentId: null,
         lastUpdated: now
       }],
@@ -1446,44 +1488,44 @@ async function boot(): Promise<void> {
     }
 
     if (activeProject) {
-      const sessionId = appState.activeSessionId && activeProject.sessions.some((s) => s.id === appState!.activeSessionId)
-        ? appState.activeSessionId
-        : activeProject.sessions[0]?.id ?? '';
-      activeContext = { kind: 'project', projectId, sessionId };
-      appState.activeSessionId = sessionId;
+      const threadId = appState.activeThreadId && activeProject.threads.some((t) => t.id === appState!.activeThreadId)
+        ? appState.activeThreadId
+        : activeProject.threads[0]?.id ?? '';
+      activeContext = { kind: 'project', projectId, threadId };
+      appState.activeThreadId = threadId;
     } else {
       // Project file is missing, fall back
-      if (appState.globalThreads.length > 0) {
-        activeContext = { kind: 'global-thread', threadId: appState.globalThreads[0].id };
+      if (appState.threads.length > 0) {
+        activeContext = { kind: 'thread', threadId: appState.threads[0].id };
       } else {
         // Create a fresh project
         const projectId2 = uid('project');
-        const sessionId2 = uid('session');
+        const threadId2 = uid('thread');
         const now = Date.now();
         appState.projectIndex = [{ id: projectId2, name: 'Document Pilot', updatedAt: now }];
         appState.activeProjectId = projectId2;
-        appState.activeSessionId = sessionId2;
+        appState.activeThreadId = threadId2;
         activeProject = {
           id: projectId2, name: 'Document Pilot', documents: [],
-          sessions: [{ id: sessionId2, title: 'New Session', messages: [], activeDocumentId: null, lastUpdated: now }],
+          threads: [{ id: threadId2, title: 'New Thread', messages: [], documents: [], activeDocumentId: null, lastUpdated: now }],
           createdAt: now, updatedAt: now
         };
-        activeContext = { kind: 'project', projectId: projectId2, sessionId: sessionId2 };
+        activeContext = { kind: 'project', projectId: projectId2, threadId: threadId2 };
         if (api?.saveProject) api.saveProject({ project: activeProject }).catch(() => {});
       }
     }
-  } else if (appState.globalThreads.length > 0) {
-    const threadId = appState.activeSessionId && appState.globalThreads.some((t) => t.id === appState!.activeSessionId)
-      ? appState.activeSessionId
-      : appState.globalThreads[0].id;
-    activeContext = { kind: 'global-thread', threadId };
+  } else if (appState.threads.length > 0) {
+    const threadId = appState.activeThreadId && appState.threads.some((t) => t.id === appState!.activeThreadId)
+      ? appState.activeThreadId
+      : appState.threads[0].id;
+    activeContext = { kind: 'thread', threadId };
   } else if (appState.projectIndex.length > 0) {
     void switchToProject(appState.projectIndex[0].id);
   }
 
   void saveAppState();
   updateRuntimeChips();
-  applySessionContext();
+  applyContext();
   setStatus('Checking GitHub authentication...');
   void refreshAuthStatus(false);
 

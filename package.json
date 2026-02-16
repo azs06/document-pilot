@@ -51,12 +51,16 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.23",
+    "dompurify": "^3.3.1",
     "exceljs": "^4.4.0",
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.2",
     "papaparse": "^5.5.3",
     "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
+    "@types/dompurify": "^3.0.5",
     "@types/node": "^24.3.0",
     "@types/papaparse": "^5.5.2",
     "electron": "^37.0.0",

@@ -5,9 +5,9 @@ import type {
   AppState,
   AppSettings,
   DocumentKind,
-  GlobalThread,
   ProjectMetadata,
-  StoredDocument
+  StoredDocument,
+  ThreadMetadata
 } from '../shared/contracts.js';
 
 const DEBOUNCE_MS = 500;
@@ -89,7 +89,28 @@ export class ProjectStorage {
   async loadAppState(): Promise<AppState | null> {
     try {
       const raw = await fs.readFile(this.appStatePath, 'utf-8');
-      return JSON.parse(raw) as AppState;
+      const data = JSON.parse(raw) as Record<string, unknown>;
+
+      // Auto-migrate old AppState field names
+      if ('globalThreads' in data && !('threads' in data)) {
+        data.threads = data.globalThreads;
+        delete data.globalThreads;
+      }
+      if ('activeSessionId' in data && !('activeThreadId' in data)) {
+        data.activeThreadId = data.activeSessionId;
+        delete data.activeSessionId;
+      }
+      // Migrate shortcut name
+      const settings = data.settings as Record<string, unknown> | undefined;
+      if (settings) {
+        const shortcuts = settings.shortcuts as Record<string, unknown> | undefined;
+        if (shortcuts && 'newSession' in shortcuts && !('newThread' in shortcuts)) {
+          shortcuts.newThread = shortcuts.newSession;
+          delete shortcuts.newSession;
+        }
+      }
+
+      return data as unknown as AppState;
     } catch {
       return null;
     }
@@ -104,7 +125,18 @@ export class ProjectStorage {
   async loadProject(projectId: string): Promise<ProjectMetadata | null> {
     try {
       const raw = await fs.readFile(this.projectJsonPath(projectId), 'utf-8');
-      return JSON.parse(raw) as ProjectMetadata;
+      const data = JSON.parse(raw) as Record<string, unknown>;
+
+      // Auto-migrate: sessions → threads
+      if ('sessions' in data && !('threads' in data)) {
+        const sessions = data.sessions as Array<Record<string, unknown>>;
+        data.threads = sessions.map((s) => ({ ...s, documents: [] }));
+        delete data.sessions;
+        // Persist the migrated data
+        await this.atomicWrite(this.projectJsonPath(projectId), JSON.stringify(data, null, 2));
+      }
+
+      return data as unknown as ProjectMetadata;
     } catch {
       return null;
     }
@@ -212,7 +244,7 @@ export class ProjectStorage {
         id: p.id,
         name: p.name,
         documents: [],
-        sessions: p.sessions.map((s) => ({
+        threads: p.sessions.map((s) => ({
           id: s.id,
           title: s.title,
           messages: s.messages.map((m) => ({
@@ -222,6 +254,7 @@ export class ProjectStorage {
             createdAt: m.createdAt,
             meta: m.meta
           })),
+          documents: [],
           activeDocumentId: null,
           lastUpdated: s.lastUpdated
         })),
@@ -238,14 +271,14 @@ export class ProjectStorage {
     const defaultSettings: AppSettings = {
       model: 'gpt-5-mini',
       reasoningEffort: 'high',
-      shortcuts: { sendMessage: 'Meta+Enter', newSession: 'Meta+Shift+N' }
+      shortcuts: { sendMessage: 'Meta+Enter', newThread: 'Meta+Shift+N' }
     };
 
     const appState: AppState = {
       projectIndex,
-      globalThreads: [],
+      threads: [],
       activeProjectId: legacy.activeProjectId ?? projects[0]?.id ?? null,
-      activeSessionId: legacy.activeSessionId ?? projects[0]?.sessions[0]?.id ?? '',
+      activeThreadId: legacy.activeSessionId ?? projects[0]?.sessions[0]?.id ?? '',
       settings: legacy.settings ?? defaultSettings
     };
 
