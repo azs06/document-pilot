@@ -1,7 +1,6 @@
-export type ChartType = 'bar' | 'line' | 'pie' | 'doughnut';
-
-export type SortOrder = 'asc' | 'desc' | 'none';
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+export type DocumentKind = 'tabular' | 'pdf';
 
 export interface DatasetSummary {
   headers: string[];
@@ -10,45 +9,33 @@ export interface DatasetSummary {
   numericColumns: string[];
 }
 
-export interface AnalyzeDatasetRequest {
-  prompt: string;
-  dataset: DatasetSummary;
-  model?: string;
-  reasoningEffort?: ReasoningEffort;
-}
-
-export interface VisualizationPlan {
-  chartType: ChartType;
-  title: string;
-  sort: SortOrder;
-  maxPoints: number;
-  reason: string;
-  transformCode: string;
-}
-
-export interface AnalyzeDatasetResponse {
-  plan: VisualizationPlan;
-  source: 'copilot' | 'fallback';
-  model: string;
-  latencyMs: number;
-  warning?: string;
-}
-
-export interface AnalyzePdfRequest {
-  prompt: string;
+export interface DocumentContext {
+  kind: DocumentKind;
   fileName: string;
-  pdfData: ArrayBuffer;
+  textContent: string;
+  pdfData?: ArrayBuffer;
+  rowCount?: number;
+  pageCount?: number;
+}
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatRequest {
+  prompt: string;
+  document: DocumentContext;
+  history?: ConversationMessage[];
   model?: string;
   reasoningEffort?: ReasoningEffort;
 }
 
-export interface AnalyzePdfResponse {
-  analysis: string;
+export interface ChatResponse {
+  answer: string;
   source: 'copilot' | 'fallback';
   model: string;
   latencyMs: number;
-  pageCount: number;
-  extractedChars: number;
   warning?: string;
 }
 
@@ -67,3 +54,87 @@ export interface CopilotAuthStatusResponse {
   modelAvailable?: boolean;
   checkedAt: number;
 }
+
+// ── Project Management Types ────────────────────────────────────────
+
+export interface StoredDocument {
+  id: string;
+  originalFileName: string;
+  storedFileName: string;
+  kind: DocumentKind;
+  sizeBytes: number;
+  addedAt: number;
+}
+
+export interface ChatMessageData {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt: number;
+  meta?: string;
+}
+
+export interface SessionMetadata {
+  id: string;
+  title: string;
+  messages: ChatMessageData[];
+  activeDocumentId: string | null;
+  lastUpdated: number;
+}
+
+export interface ProjectMetadata {
+  id: string;
+  name: string;
+  documents: StoredDocument[];
+  sessions: SessionMetadata[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GlobalThread {
+  id: string;
+  title: string;
+  messages: ChatMessageData[];
+  documents: StoredDocument[];
+  activeDocumentId: string | null;
+  lastUpdated: number;
+}
+
+export interface KeyboardShortcuts {
+  sendMessage: string;
+  newSession: string;
+}
+
+export interface AppSettings {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  shortcuts: KeyboardShortcuts;
+}
+
+export interface AppState {
+  projectIndex: Array<{ id: string; name: string; updatedAt: number }>;
+  globalThreads: GlobalThread[];
+  activeProjectId: string | null;
+  activeSessionId: string;
+  settings: AppSettings;
+}
+
+// ── IPC Request/Response Types ──────────────────────────────────────
+
+export interface SaveAppStateRequest { state: AppState; }
+export interface LoadProjectRequest { projectId: string; }
+export interface LoadProjectResponse { project: ProjectMetadata | null; }
+export interface SaveProjectRequest { project: ProjectMetadata; }
+export interface CopyDocumentRequest {
+  targetId: string;
+  documentId: string;
+  originalFileName: string;
+  fileData: ArrayBuffer;
+}
+export interface CopyDocumentResponse { storedDocument: StoredDocument; }
+export interface ReadDocumentRequest { targetId: string; storedFileName: string; }
+export interface ReadDocumentResponse { fileData: ArrayBuffer; originalFileName: string; kind: DocumentKind; }
+export interface DeleteDocumentRequest { targetId: string; documentId: string; storedFileName: string; }
+export interface DeleteProjectRequest { projectId: string; }
+export interface MigrateStateRequest { legacyState: string; }
+export interface MigrateStateResponse { success: boolean; appState: AppState; }

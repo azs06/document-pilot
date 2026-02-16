@@ -18,13 +18,20 @@
 
         <div class="sidebar-actions">
           <button id="new-project" type="button" class="ghost">New Project</button>
-          <button id="open-settings" type="button" class="ghost">Settings</button>
+          <button id="new-thread" type="button" class="ghost">New Thread</button>
         </div>
 
         <div class="section-head">
-          <span>Projects / Threads</span>
+          <span>Projects</span>
         </div>
         <div id="project-list" class="project-list"></div>
+
+        <div class="section-head">
+          <span>Threads</span>
+        </div>
+        <div id="thread-list" class="project-list"></div>
+
+        <button id="open-settings" type="button" class="ghost sidebar-settings-btn">Settings</button>
       </aside>
 
       <main class="workspace">
@@ -36,9 +43,11 @@
           <div class="runtime-indicator" id="runtime-indicator">Model: gpt-5-mini | Reasoning: high</div>
         </header>
 
-        <section id="chart-panel" class="chart-panel hidden" aria-label="Chart output">
-          <canvas id="chart"></canvas>
-        </section>
+        <div id="document-bar" class="document-bar hidden">
+          <span class="document-bar-label">Documents:</span>
+          <div id="document-chips" class="document-chips"></div>
+          <button id="add-document" type="button" class="ghost ghost-sm">+ Add</button>
+        </div>
 
         <section id="chat-log" class="chat-log" aria-live="polite"></section>
 
@@ -119,6 +128,16 @@
 
         <footer>
           <button id="save-settings" type="button" class="primary">Save Settings</button>
+        </footer>
+      </div>
+    </div>
+
+    <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card modal-card-sm">
+        <p id="confirm-message">Are you sure?</p>
+        <footer>
+          <button id="confirm-cancel" type="button" class="ghost">Cancel</button>
+          <button id="confirm-ok" type="button" class="primary danger">Delete</button>
         </footer>
       </div>
     </div>

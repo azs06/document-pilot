@@ -30,19 +30,18 @@ GitHub Copilot LLM (default: gpt-5-mini)
 ### Key files
 
 - **`src/shared/contracts.ts`** — All IPC request/response types. Both processes import from here. Edit this first when changing the API surface.
-- **`src/main/main.ts`** — Electron bootstrap, IPC handler registration (`analyze-dataset`, `analyze-pdf`, `get-copilot-auth-status`).
-- **`src/main/copilotPlanner.ts`** — `CopilotPlanner` class: manages Copilot SDK client lifecycle, auth checks, sends prompts, parses `VisualizationPlan` JSON. Contains deterministic fallback logic if Copilot is unavailable.
-- **`src/main/preload.ts`** — Context bridge exposing three IPC methods to renderer.
-- **`src/renderer/main.ts`** — Monolithic UI file: state management, DOM manipulation, file parsing, chart rendering. No framework.
+- **`src/main/main.ts`** — Electron bootstrap, IPC handler registration (`chat`, `get-copilot-auth-status`).
+- **`src/main/copilotChat.ts`** — `CopilotChat` class: manages Copilot SDK client lifecycle, auth checks, sends prompts, returns text answers. Contains fallback logic if Copilot is unavailable.
+- **`src/main/preload.ts`** — Context bridge exposing two IPC methods to renderer.
+- **`src/renderer/main.ts`** — Monolithic UI file: state management, DOM manipulation, file parsing, chat display. No framework.
 - **`src/renderer/styles.css`** — Tailwind CSS v4 imports.
 
 ### Data flow
 
 1. User attaches CSV/Excel/PDF → renderer parses file locally (PapaParse worker for CSV, ExcelJS for Excel, binary passthrough for PDF).
-2. Renderer builds a `DatasetSummary` (headers, sample rows, numeric columns) and sends it + user prompt via IPC.
-3. Main process sends summary to Copilot, receives a `VisualizationPlan` (chart type, fields, sort, derived metrics).
-4. **Renderer computes chart data locally** from the full dataset using the plan — raw data never leaves the renderer for tabular files.
-5. Chart.js renders with performance flags (`animation: false`, `parsing: false`, `normalized: true`).
+2. Renderer builds a `DocumentContext` (text content for tabular files, binary passthrough for PDFs) and sends it + user prompt + conversation history via IPC.
+3. Main process extracts PDF text if needed, builds relevant excerpt, sends to Copilot, receives a markdown text answer.
+4. Renderer displays the markdown answer in the chat log.
 
 ### Two TypeScript configs
 
@@ -53,9 +52,8 @@ GitHub Copilot LLM (default: gpt-5-mini)
 ## Design Constraints (from Agents.md)
 
 - **Performance is the top priority.** Keep parsing and model calls off the main UI thread. Log latency for parse, inference, and render stages.
-- Copilot fallback: the app must remain functional without Copilot auth — `CopilotPlanner` generates deterministic plans as fallback.
-- Chart selection defaults: bar for ranking/comparison, line for time progression, pie/doughnut for small-category composition.
-- Derived metrics (e.g. `goal_difference`) are computed renderer-side, not by the model.
+- Copilot fallback: the app must remain functional without Copilot auth — `CopilotChat` returns document excerpts as fallback.
+- Multi-turn conversation: the renderer sends conversation history (last 10 messages) with each request for context continuity.
 
 ## Requirements
 

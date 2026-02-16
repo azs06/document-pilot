@@ -1,13 +1,31 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AnalyzeDatasetRequest, AnalyzePdfRequest, CopilotAuthStatusRequest } from '../shared/contracts.js';
-import { CopilotPlanner } from './copilotPlanner.js';
+import type {
+  ChatRequest,
+  CopilotAuthStatusRequest,
+  SaveAppStateRequest,
+  LoadProjectRequest,
+  SaveProjectRequest,
+  CopyDocumentRequest,
+  ReadDocumentRequest,
+  DeleteDocumentRequest,
+  DeleteProjectRequest,
+  MigrateStateRequest
+} from '../shared/contracts.js';
+import { CopilotChat } from './copilotChat.js';
+import { ProjectStorage } from './projectStorage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const planner = new CopilotPlanner();
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
+const chat = new CopilotChat();
+const storage = new ProjectStorage();
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -46,11 +64,61 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-ipcMain.handle('analyze-dataset', async (_event, payload: AnalyzeDatasetRequest) => planner.planVisualization(payload));
-ipcMain.handle('analyze-pdf', async (_event, payload: AnalyzePdfRequest) => planner.analyzePdf(payload));
+ipcMain.handle('chat', async (_event, payload: ChatRequest) => chat.chat(payload));
 ipcMain.handle('get-copilot-auth-status', async (_event, payload: CopilotAuthStatusRequest) =>
-  planner.getCopilotAuthStatus(payload)
+  chat.getCopilotAuthStatus(payload)
 );
+
+// ── Project Storage IPC ───────────────────────────────────────────
+
+ipcMain.handle('load-app-state', async () => storage.loadAppState());
+
+ipcMain.handle('save-app-state', (_event, payload: SaveAppStateRequest) => {
+  storage.saveAppState(payload.state);
+});
+
+ipcMain.handle('load-project', async (_event, payload: LoadProjectRequest) => ({
+  project: await storage.loadProject(payload.projectId)
+}));
+
+ipcMain.handle('save-project', (_event, payload: SaveProjectRequest) => {
+  storage.saveProject(payload.project);
+});
+
+ipcMain.handle('delete-project', async (_event, payload: DeleteProjectRequest) => {
+  await storage.deleteProject(payload.projectId);
+});
+
+ipcMain.handle('copy-document', async (_event, payload: CopyDocumentRequest) => ({
+  storedDocument: await storage.copyDocument(
+    payload.targetId,
+    payload.documentId,
+    payload.originalFileName,
+    Buffer.from(payload.fileData)
+  )
+}));
+
+ipcMain.handle('read-document', async (_event, payload: ReadDocumentRequest) => {
+  const result = await storage.readDocument(payload.targetId, payload.storedFileName);
+  return { fileData: result.fileData.buffer, originalFileName: result.originalFileName, kind: result.kind };
+});
+
+ipcMain.handle('delete-document', async (_event, payload: DeleteDocumentRequest) => {
+  await storage.deleteDocument(payload.targetId, payload.storedFileName);
+});
+
+ipcMain.handle('migrate-legacy-state', async (_event, payload: MigrateStateRequest) => {
+  const appState = await storage.migrateLegacyState(payload.legacyState);
+  return { success: true, appState };
+});
+
+app.on('second-instance', () => {
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    if (windows[0].isMinimized()) windows[0].restore();
+    windows[0].focus();
+  }
+});
 
 app.whenReady().then(() => {
   createWindow();
@@ -67,5 +135,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
-  await planner.stop();
+  await storage.flush();
+  await chat.stop();
 });

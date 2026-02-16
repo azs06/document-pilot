@@ -83,6 +83,18 @@
     @apply mt-2 flex flex-col gap-1.5;
   }
 
+  .session-row {
+    @apply flex items-center gap-1;
+  }
+
+  .session-row .delete-btn {
+    @apply shrink-0 opacity-0 transition;
+  }
+
+  .session-row:hover .delete-btn {
+    @apply opacity-100;
+  }
+
   .session-btn {
     @apply flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-left text-sm text-slate-300 transition hover:border-slate-600 hover:text-slate-100;
   }
@@ -96,7 +108,7 @@
   }
 
   .workspace {
-    @apply grid grid-rows-[auto_auto_1fr_auto] gap-3 p-4;
+    @apply grid grid-rows-[auto_1fr_auto] gap-3 p-4;
   }
 
   .workspace-head {
@@ -113,15 +125,6 @@
 
   .runtime-indicator {
     @apply rounded-full border border-cyan-400/35 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-200;
-  }
-
-  .chart-panel {
-    @apply rounded-2xl border border-slate-800/80 bg-slate-900/70 p-3 shadow-[0_8px_22px_rgba(0,0,0,0.2)];
-    min-height: 280px;
-  }
-
-  .chart-panel.hidden {
-    @apply hidden;
   }
 
   .chat-log {
@@ -276,6 +279,77 @@
     @apply absolute h-px w-px overflow-hidden whitespace-nowrap border-0 p-0;
     clip-path: inset(50%);
   }
+
+  .sidebar-settings-btn {
+    @apply mt-auto;
+  }
+
+  .document-bar {
+    @apply flex items-center gap-2 rounded-xl border border-slate-800/80 bg-slate-900/50 px-3 py-2;
+  }
+
+  .document-bar.hidden {
+    @apply hidden;
+  }
+
+  .document-bar-label {
+    @apply text-xs font-medium text-slate-400 whitespace-nowrap;
+  }
+
+  .document-chips {
+    @apply flex flex-1 flex-wrap gap-1.5 overflow-hidden;
+  }
+
+  .doc-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-300 cursor-pointer transition hover:border-slate-500;
+  }
+
+  .doc-chip.active {
+    @apply border-cyan-400/60 bg-cyan-400/10 text-cyan-200;
+  }
+
+  .doc-chip-remove {
+    @apply ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-slate-500 hover:text-red-400 hover:bg-red-400/15;
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .ghost-sm {
+    @apply px-2 py-1 text-xs;
+  }
+
+  .doc-badge {
+    @apply ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-700/80 px-1 text-[10px] font-semibold text-slate-300;
+  }
+
+  .thread-btn {
+    @apply flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-2 text-left text-sm text-slate-300 transition hover:border-slate-600 hover:text-slate-100;
+  }
+
+  .thread-btn.active {
+    @apply border-cyan-400/60 bg-cyan-400/10 text-cyan-200;
+  }
+
+  .thread-tools {
+    @apply flex items-center gap-1;
+  }
+
+  .delete-btn {
+    @apply inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/15 transition;
+    font-size: 11px;
+  }
+
+  .modal-card-sm {
+    @apply max-w-sm;
+  }
+
+  button.danger {
+    @apply bg-gradient-to-br from-red-500 to-red-600 shadow-[0_6px_20px_rgba(239,68,68,0.35)] hover:from-red-400 hover:to-red-500;
+  }
+
+  .loading-spinner {
+    @apply inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-400 border-t-transparent;
+  }
 }
 
 @media (max-width: 1024px) {
@@ -289,7 +363,7 @@
   }
 
   .workspace {
-    @apply grid-rows-[auto_auto_minmax(220px,1fr)_auto];
+    @apply grid-rows-[auto_minmax(220px,1fr)_auto];
   }
 
   .msg {

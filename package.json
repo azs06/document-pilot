@@ -2,7 +2,7 @@
   "name": "document-pilot",
   "version": "0.1.0",
   "private": true,
-  "description": "High-performance Electron app for AI-powered document analysis and charting.",
+  "description": "Electron app for AI-powered chat with documents (CSV, Excel, PDF).",
   "main": "dist-electron/main/main.js",
   "engines": {
     "node": ">=24.0.0"
@@ -16,11 +16,41 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "typecheck": "tsc --noEmit -p tsconfig.electron.json && tsc --noEmit -p tsconfig.renderer.json",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never"
+  },
+  "build": {
+    "appId": "com.document-pilot.app",
+    "productName": "Document Pilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist-renderer/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.23",
-    "chart.js": "^4.5.1",
     "electron": "^37.0.0",
     "exceljs": "^4.4.0",
     "papaparse": "^5.5.3",
@@ -34,6 +64,7 @@
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
+    "electron-builder": "^26.0.12",
     "wait-on": "^8.0.5"
   }
 }
