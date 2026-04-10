@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="100%" stop-color="#0f2440"/>
+    </linearGradient>
+    <linearGradient id="glow1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="glow2" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <filter id="blur1">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <filter id="blur2">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="1024" height="1024" rx="220" ry="220" fill="url(#bg)"/>
+  <!-- Ambient glow -->
+  <ellipse cx="512" cy="420" rx="280" ry="260" fill="#06b6d4" opacity="0.07" filter="url(#blur1)"/>
+  <!-- Interlocking flowing shapes — two arcs forming an infinity/collaboration symbol -->
+  <g transform="translate(512, 512)" stroke-linecap="round" fill="none" stroke-width="56">
+    <!-- Left loop - outer -->
+    <path d="M-40,-10 C-200,-220 -340,-80 -220,40 C-100,160 40,180 40,10" stroke="url(#glow2)" opacity="0.9" filter="url(#blur2)"/>
+    <path d="M-40,-10 C-200,-220 -340,-80 -220,40 C-100,160 40,180 40,10" stroke="url(#glow2)" stroke-width="40" opacity="0.7"/>
+    <!-- Right loop - outer -->
+    <path d="M40,10 C40,180 180,220 260,100 C340,-20 260,-200 40,-10" stroke="url(#glow1)" opacity="0.9" filter="url(#blur2)"/>
+    <path d="M40,10 C40,180 180,220 260,100 C340,-20 260,-200 40,-10" stroke="url(#glow1)" stroke-width="40" opacity="0.7"/>
+    <!-- Center highlight -->
+    <circle cx="0" cy="0" r="6" fill="#22d3ee" opacity="0.6"/>
+  </g>
+</svg>

@@ -1,5 +1,5 @@
 {
-  "name": "document-pilot",
+  "name": "copilot-cowork",
   "version": "0.1.0",
   "private": true,
   "description": "Electron app for AI-powered chat with documents (CSV, Excel, PDF).",
@@ -23,9 +23,10 @@
   },
   "build": {
     "appId": "com.document-pilot.app",
-    "productName": "Document Pilot",
+    "productName": "Copilot Cowork",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist-electron/**/*",

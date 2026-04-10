@@ -4,3 +4,4 @@ dist-renderer
 release
 .DS_Store
 npm-debug.log*
+.playwright-mcp

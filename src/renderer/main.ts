@@ -1,20 +1,30 @@
-import Papa, { type ParseResult } from 'papaparse';
 import './styles.css';
 
-import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
-import 'highlight.js/styles/github-dark.css';
-
-// Register only languages relevant to data-analysis context
+import bash from 'highlight.js/lib/languages/bash';
+import css from 'highlight.js/lib/languages/css';
 import javascript from 'highlight.js/lib/languages/javascript';
+import json from 'highlight.js/lib/languages/json';
+import plaintext from 'highlight.js/lib/languages/plaintext';
 import python from 'highlight.js/lib/languages/python';
 import sql from 'highlight.js/lib/languages/sql';
-import json from 'highlight.js/lib/languages/json';
-import bash from 'highlight.js/lib/languages/bash';
 import xml from 'highlight.js/lib/languages/xml';
-import css from 'highlight.js/lib/languages/css';
-import plaintext from 'highlight.js/lib/languages/plaintext';
+import 'highlight.js/styles/github.css';
+import { marked } from 'marked';
+import type {
+  AppSettings,
+  AppState,
+  ApprovalRequest,
+  AttachmentRecord,
+  PermissionGrant,
+  ResolveApprovalResponse,
+  SessionRecord,
+  StartRunResponse,
+  TaskRecord,
+  TaskRun,
+  WorkspaceMetadata
+} from '../shared/contracts.js';
 
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('python', python);
@@ -24,29 +34,8 @@ hljs.registerLanguage('bash', bash);
 hljs.registerLanguage('xml', xml);
 hljs.registerLanguage('css', css);
 hljs.registerLanguage('plaintext', plaintext);
-import type {
-  AppSettings,
-  AppState,
-  ChatMessageData,
-  ChatResponse,
-  ConversationMessage,
-  CopilotAuthStatusResponse,
-  DocumentContext,
-  ProjectMetadata,
-  ReasoningEffort,
-  StoredDocument,
-  ThreadMetadata
-} from '../shared/contracts.js';
 
-type Cell = string | number | boolean | null;
-type DataRow = Record<string, Cell>;
-type ExcelCellValue = import('exceljs').CellValue;
-
-interface Dataset {
-  headers: string[];
-  rows: DataRow[];
-  numericColumns: string[];
-}
+type DocumentPilotApi = Window['documentPilot'];
 
 interface ShortcutDefinition {
   key: string;
@@ -58,22 +47,8 @@ interface ShortcutDefinition {
 
 interface AuthGateState {
   checking: boolean;
-  status: CopilotAuthStatusResponse | null;
+  status: Awaited<ReturnType<DocumentPilotApi['getCopilotAuthStatus']>> | null;
 }
-
-type DocumentPilotApi = Window['documentPilot'];
-
-type SelectedInput =
-  | { kind: 'tabular'; dataset: Dataset; fileName: string }
-  | { kind: 'pdf'; file: File; fileName: string }
-  | { kind: 'stored-tabular'; dataset: Dataset; fileName: string; docId: string }
-  | { kind: 'stored-pdf'; fileData: ArrayBuffer; fileName: string; docId: string };
-
-type ActiveContext =
-  | { kind: 'project'; projectId: string; threadId: string }
-  | { kind: 'thread'; threadId: string };
-
-// ── Constants ─────────────────────────────────────────────────────
 
 const LEGACY_STORAGE_KEY = 'document-pilot.ui.v1';
 const DEFAULT_SETTINGS: AppSettings = {
@@ -81,67 +56,52 @@ const DEFAULT_SETTINGS: AppSettings = {
   reasoningEffort: 'high',
   shortcuts: {
     sendMessage: 'Meta+Enter',
-    newThread: 'Meta+Shift+N'
+    newSession: 'Meta+Shift+N'
   }
 };
 
-const MAX_TEXT_CONTENT_ROWS = 5000;
-
-// ── DOM Elements ──────────────────────────────────────────────────
-
 const fileInput = requireElement<HTMLInputElement>('#file-input');
 const attachFileButton = requireElement<HTMLButtonElement>('#attach-file');
+const addAttachmentButton = requireElement<HTMLButtonElement>('#add-attachment');
 const promptInput = requireElement<HTMLTextAreaElement>('#prompt');
 const sendButton = requireElement<HTMLButtonElement>('#send');
 const statusEl = requireElement<HTMLSpanElement>('#status');
 const metricsEl = requireElement<HTMLDivElement>('#metrics');
 const fileChipEl = requireElement<HTMLSpanElement>('#file-chip');
-const threadTitleEl = requireElement<HTMLHeadingElement>('#thread-title');
-const threadSubtitleEl = requireElement<HTMLParagraphElement>('#thread-subtitle');
+const sessionTitleEl = requireElement<HTMLHeadingElement>('#session-title');
+const sessionSubtitleEl = requireElement<HTMLParagraphElement>('#session-subtitle');
 const runtimeIndicatorEl = requireElement<HTMLDivElement>('#runtime-indicator');
+const grantIndicatorEl = requireElement<HTMLDivElement>('#grant-indicator');
 const modelChipEl = requireElement<HTMLSpanElement>('#model-chip');
 const reasoningChipEl = requireElement<HTMLSpanElement>('#reasoning-chip');
-const projectListEl = requireElement<HTMLDivElement>('#project-list');
-const threadListEl = requireElement<HTMLDivElement>('#thread-list');
-const newProjectButton = requireElement<HTMLButtonElement>('#new-project');
-const newThreadButton = requireElement<HTMLButtonElement>('#new-thread');
+const workspaceListEl = requireElement<HTMLDivElement>('#workspace-list');
+const sessionListEl = requireElement<HTMLDivElement>('#session-list');
+const newWorkspaceButton = requireElement<HTMLButtonElement>('#new-workspace');
+const newSessionButton = requireElement<HTMLButtonElement>('#new-session');
 const openSettingsButton = requireElement<HTMLButtonElement>('#open-settings');
-const chatLogEl = requireElement<HTMLDivElement>('#chat-log');
-const composerEl = requireElement<HTMLElement>('.composer');
+const taskFeedEl = requireElement<HTMLDivElement>('#task-feed');
 const authGateEl = requireElement<HTMLElement>('#auth-gate');
 const authMessageEl = requireElement<HTMLParagraphElement>('#auth-message');
 const recheckAuthButton = requireElement<HTMLButtonElement>('#recheck-auth');
-
-const documentBarEl = requireElement<HTMLDivElement>('#document-bar');
-const documentChipsEl = requireElement<HTMLDivElement>('#document-chips');
-const addDocumentButton = requireElement<HTMLButtonElement>('#add-document');
-
+const attachmentBarEl = requireElement<HTMLDivElement>('#attachment-bar');
+const attachmentChipsEl = requireElement<HTMLDivElement>('#attachment-chips');
 const settingsModalEl = requireElement<HTMLDivElement>('#settings-modal');
 const closeSettingsButton = requireElement<HTMLButtonElement>('#close-settings');
 const saveSettingsButton = requireElement<HTMLButtonElement>('#save-settings');
 const settingsModelInput = requireElement<HTMLInputElement>('#settings-model');
 const settingsReasoningSelect = requireElement<HTMLSelectElement>('#settings-reasoning');
 const shortcutSendInput = requireElement<HTMLInputElement>('#shortcut-send');
-const shortcutNewThreadInput = requireElement<HTMLInputElement>('#shortcut-new-thread');
-
+const shortcutNewSessionInput = requireElement<HTMLInputElement>('#shortcut-new-session');
 const confirmModalEl = requireElement<HTMLDivElement>('#confirm-modal');
 const confirmMessageEl = requireElement<HTMLParagraphElement>('#confirm-message');
 const confirmCancelButton = requireElement<HTMLButtonElement>('#confirm-cancel');
 const confirmOkButton = requireElement<HTMLButtonElement>('#confirm-ok');
 
-// ── State ─────────────────────────────────────────────────────────
-
 let appState: AppState | null = null;
-let activeProject: ProjectMetadata | null = null;
-let activeContext: ActiveContext = { kind: 'project', projectId: '', threadId: '' };
-let lastParseMs = 0;
+let activeWorkspace: WorkspaceMetadata | null = null;
 let authGateState: AuthGateState = { checking: true, status: null };
 let desktopApiCache: Partial<DocumentPilotApi> | null = null;
-
-const documentCache = new Map<string, SelectedInput>();
 let pendingConfirm: { resolve: (ok: boolean) => void } | null = null;
-
-// ── Utilities ─────────────────────────────────────────────────────
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -150,43 +110,7 @@ function requireElement<T extends Element>(selector: string): T {
 }
 
 function uid(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
-}
-
-function toNumber(value: Cell): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const maybe = Number(value);
-    if (Number.isFinite(maybe)) return maybe;
-  }
-  return undefined;
-}
-
-function inferNumericColumns(headers: string[], rows: DataRow[]): string[] {
-  return headers.filter((header) => {
-    let numeric = 0;
-    let seen = 0;
-    for (let i = 0; i < rows.length; i += 1) {
-      const value = rows[i]?.[header];
-      if (value === null || value === undefined || value === '') continue;
-      seen += 1;
-      if (toNumber(value) !== undefined) numeric += 1;
-    }
-    return seen > 0 && numeric / seen >= 0.7;
-  });
-}
-
-function normalizeParsedDataset(headers: string[], rows: DataRow[], sourceLabel: string): Dataset {
-  const filteredHeaders = headers.filter((header) => Boolean(header));
-  const filteredRows = rows.filter((row) => Object.values(row).some((v) => v !== null && v !== ''));
-  if (filteredHeaders.length === 0 || filteredRows.length === 0) {
-    throw new Error(`${sourceLabel} did not contain parseable rows with headers.`);
-  }
-  return {
-    headers: filteredHeaders,
-    rows: filteredRows,
-    numericColumns: inferNumericColumns(filteredHeaders, filteredRows)
-  };
+  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 function escapeHtml(value: string): string {
@@ -197,8 +121,6 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
-
-// ── Markdown Rendering ────────────────────────────────────────────
 
 const renderer = new marked.Renderer();
 
@@ -227,14 +149,12 @@ marked.use({
 
 function renderMarkdown(content: string): string {
   const rawHtml = marked.parse(content) as string;
-  return DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['target'],
-  });
+  return DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['target'] });
 }
 
 function formatRelativeTime(timestamp: number): string {
   const diffMs = Date.now() - timestamp;
-  const minutes = Math.floor(diffMs / 60000);
+  const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 1) return 'now';
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
@@ -243,117 +163,14 @@ function formatRelativeTime(timestamp: number): string {
   return `${days}d`;
 }
 
-// ── Parsing ───────────────────────────────────────────────────────
-
-function parseCsv(file: File): Promise<Dataset> {
-  return new Promise((resolve, reject) => {
-    Papa.parse<DataRow>(file, {
-      header: true,
-      worker: true,
-      dynamicTyping: true,
-      skipEmptyLines: 'greedy',
-      complete: (results: ParseResult<DataRow>) => {
-        if (results.errors.length > 0) {
-          reject(new Error(results.errors[0].message));
-          return;
-        }
-        const rows = (results.data ?? []).map((row) => row ?? {});
-        const headers = results.meta.fields ?? [];
-        resolve(normalizeParsedDataset(headers, rows, 'CSV'));
-      },
-      error: (error: Error) => reject(error)
-    });
-  });
+function truncate(value: string, max = 80): string {
+  const trimmed = value.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
-async function parseExcel(file: File): Promise<Dataset> {
-  const { default: ExcelJS } = await import('exceljs');
-  const buffer = await file.arrayBuffer();
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
-  const worksheet = workbook.worksheets.find((sheet) => sheet.actualRowCount > 0);
-  if (!worksheet) throw new Error('Excel workbook does not contain a non-empty sheet.');
-
-  const normalizeExcelCell = (value: ExcelCellValue | undefined): Cell => {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === 'object') {
-      if ('result' in value) return normalizeExcelCell(value.result as ExcelCellValue);
-      if ('text' in value && typeof value.text === 'string') return value.text;
-      if ('richText' in value && Array.isArray(value.richText)) {
-        return value.richText.map((part: { text?: string }) => part.text ?? '').join('');
-      }
-      if ('error' in value && typeof value.error === 'string') return value.error;
-    }
-    return String(value);
-  };
-
-  const firstRow = worksheet.getRow(1);
-  const headers: string[] = [];
-  firstRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    const raw = normalizeExcelCell(cell.value);
-    const header = raw === null ? '' : String(raw).trim();
-    if (header) headers[colNumber - 1] = header;
-  });
-
-  let dataStartRow = 2;
-  if (headers.filter(Boolean).length === 0) {
-    dataStartRow = 1;
-    for (let col = 1; col <= worksheet.actualColumnCount; col += 1) {
-      headers[col - 1] = `Column ${col}`;
-    }
-  }
-
-  const rows: DataRow[] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber < dataStartRow) return;
-    const output: DataRow = {};
-    for (let col = 1; col <= headers.length; col += 1) {
-      const header = headers[col - 1];
-      if (!header) continue;
-      output[header] = normalizeExcelCell(row.getCell(col).value);
-    }
-    rows.push(output);
-  });
-
-  return normalizeParsedDataset(headers, rows, `Excel sheet "${worksheet.name}"`);
+function formatStatusLabel(status: string): string {
+  return status.replaceAll('_', ' ');
 }
-
-function isExcelFile(file: File): boolean {
-  const lower = file.name.toLowerCase();
-  return lower.endsWith('.xlsx') || lower.endsWith('.xlsm') || file.type.includes('spreadsheetml') || file.type.includes('excel');
-}
-
-function isPdfFile(file: File): boolean {
-  const lower = file.name.toLowerCase();
-  return lower.endsWith('.pdf') || file.type === 'application/pdf';
-}
-
-async function parseDataset(file: File): Promise<Dataset> {
-  return isExcelFile(file) ? parseExcel(file) : parseCsv(file);
-}
-
-function buildTabularTextContent(dataset: Dataset): string {
-  const headers = dataset.headers;
-  const rows = dataset.rows.slice(0, MAX_TEXT_CONTENT_ROWS);
-  const headerLine = `| ${headers.join(' | ')} |`;
-  const separatorLine = `| ${headers.map(() => '---').join(' | ')} |`;
-  const dataLines = rows.map((row) => {
-    const cells = headers.map((h) => {
-      const val = row[h];
-      return val === null || val === undefined ? '' : String(val);
-    });
-    return `| ${cells.join(' | ')} |`;
-  });
-  const lines = [headerLine, separatorLine, ...dataLines];
-  if (dataset.rows.length > MAX_TEXT_CONTENT_ROWS) {
-    lines.push(`\n(Showing first ${MAX_TEXT_CONTENT_ROWS} of ${dataset.rows.length} rows)`);
-  }
-  return lines.join('\n');
-}
-
-// ── Desktop API ───────────────────────────────────────────────────
 
 async function resolveDesktopApi(timeoutMs = 1500): Promise<Partial<DocumentPilotApi> | null> {
   if (desktopApiCache) return desktopApiCache;
@@ -369,8 +186,6 @@ async function resolveDesktopApi(timeoutMs = 1500): Promise<Partial<DocumentPilo
   return null;
 }
 
-// ── Confirm Dialog ────────────────────────────────────────────────
-
 function showConfirm(message: string): Promise<boolean> {
   confirmMessageEl.textContent = message;
   confirmModalEl.classList.remove('hidden');
@@ -381,13 +196,10 @@ function showConfirm(message: string): Promise<boolean> {
 
 function closeConfirm(result: boolean): void {
   confirmModalEl.classList.add('hidden');
-  if (pendingConfirm) {
-    pendingConfirm.resolve(result);
-    pendingConfirm = null;
-  }
+  if (!pendingConfirm) return;
+  pendingConfirm.resolve(result);
+  pendingConfirm = null;
 }
-
-// ── Status Helpers ────────────────────────────────────────────────
 
 function setStatus(message: string): void {
   statusEl.textContent = message;
@@ -397,9 +209,11 @@ function setMetrics(message: string): void {
   metricsEl.textContent = message;
 }
 
-// ── Auth Gate ─────────────────────────────────────────────────────
+function getSettings(): AppSettings {
+  return appState?.settings ?? DEFAULT_SETTINGS;
+}
 
-function getAuthBlockReason(status: CopilotAuthStatusResponse | null): string | null {
+function getAuthBlockReason(status: AuthGateState['status']): string | null {
   if (!status) return 'Checking GitHub authentication...';
   if (!status.ok) return `Copilot SDK unavailable: ${status.statusMessage}`;
   if (!status.isAuthenticated) return status.statusMessage;
@@ -407,15 +221,9 @@ function getAuthBlockReason(status: CopilotAuthStatusResponse | null): string | 
   return null;
 }
 
-function getSettings(): AppSettings {
-  return appState?.settings ?? DEFAULT_SETTINGS;
-}
-
 function applyAuthGate(): void {
   const reason = authGateState.checking ? 'Checking GitHub authentication...' : getAuthBlockReason(authGateState.status);
   const locked = authGateState.checking || Boolean(reason);
-  composerEl.classList.toggle('locked', locked);
-  attachFileButton.disabled = locked;
   sendButton.disabled = locked;
   promptInput.disabled = locked;
   if (locked) {
@@ -437,9 +245,11 @@ async function refreshAuthStatus(announceSuccess = false): Promise<boolean> {
     authGateState = {
       checking: false,
       status: {
-        ok: false, isAuthenticated: false,
+        ok: false,
+        isAuthenticated: false,
         statusMessage: 'Desktop bridge unavailable. Restart the app to reload the preload script.',
-        model: settings.model, checkedAt: Date.now()
+        model: settings.model,
+        checkedAt: Date.now()
       }
     };
     applyAuthGate();
@@ -451,13 +261,15 @@ async function refreshAuthStatus(announceSuccess = false): Promise<boolean> {
     authGateState = {
       checking: false,
       status: {
-        ok: true, isAuthenticated: true,
+        ok: true,
+        isAuthenticated: true,
         statusMessage: 'Auth precheck unavailable in this runtime. Continuing and validating on send.',
-        model: settings.model, checkedAt: Date.now()
+        model: settings.model,
+        checkedAt: Date.now()
       }
     };
     applyAuthGate();
-    if (announceSuccess) setStatus('Bridge compatibility mode: auth will be validated when sending a request.');
+    if (announceSuccess) setStatus('Bridge compatibility mode: auth will be validated when you delegate a task.');
     return true;
   }
 
@@ -468,9 +280,11 @@ async function refreshAuthStatus(announceSuccess = false): Promise<boolean> {
     authGateState = {
       checking: false,
       status: {
-        ok: false, isAuthenticated: false,
+        ok: false,
+        isAuthenticated: false,
         statusMessage: (error as Error).message || 'Unable to check Copilot authentication.',
-        model: settings.model, checkedAt: Date.now()
+        model: settings.model,
+        checkedAt: Date.now()
       }
     };
   }
@@ -491,13 +305,17 @@ async function ensureAuthReady(): Promise<boolean> {
   return refreshAuthStatus(false);
 }
 
-// ── Shortcuts ─────────────────────────────────────────────────────
-
 function parseShortcut(value: string): ShortcutDefinition | null {
-  const parts = value.split('+').map((part) => part.trim().toLowerCase()).filter(Boolean);
+  const parts = value
+    .split('+')
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+
   if (parts.length === 0) return null;
+
   const key = parts.find((part) => !['meta', 'cmd', 'command', 'shift', 'alt', 'option', 'ctrl', 'control'].includes(part));
   if (!key) return null;
+
   return {
     key: key === 'return' ? 'enter' : key,
     meta: parts.includes('meta') || parts.includes('cmd') || parts.includes('command'),
@@ -510,81 +328,76 @@ function parseShortcut(value: string): ShortcutDefinition | null {
 function shortcutMatches(event: KeyboardEvent, binding: string): boolean {
   const shortcut = parseShortcut(binding);
   if (!shortcut) return false;
-  const eventKey = event.key.toLowerCase();
-  const normalizedKey = eventKey === 'return' ? 'enter' : eventKey;
-  return normalizedKey === shortcut.key && event.metaKey === shortcut.meta && event.shiftKey === shortcut.shift && event.altKey === shortcut.alt && event.ctrlKey === shortcut.ctrl;
+  const normalizedKey = event.key.toLowerCase() === 'return' ? 'enter' : event.key.toLowerCase();
+  return (
+    normalizedKey === shortcut.key &&
+    event.metaKey === shortcut.meta &&
+    event.shiftKey === shortcut.shift &&
+    event.altKey === shortcut.alt &&
+    event.ctrlKey === shortcut.ctrl
+  );
 }
 
-// ── State Persistence ─────────────────────────────────────────────
+function getActiveSession(): SessionRecord | null {
+  if (!activeWorkspace || !appState?.activeSessionId) return null;
+  const activeSessionId = appState.activeSessionId;
+  return activeWorkspace.sessions.find((session) => session.id === activeSessionId) ?? null;
+}
+
+function syncWorkspaceIndex(workspace: WorkspaceMetadata): void {
+  if (!appState) return;
+  const existing = appState.workspaceIndex.find((entry) => entry.id === workspace.id);
+  if (existing) {
+    existing.name = workspace.name;
+    existing.updatedAt = workspace.updatedAt;
+  } else {
+    appState.workspaceIndex.unshift({ id: workspace.id, name: workspace.name, updatedAt: workspace.updatedAt });
+  }
+}
 
 async function saveAppState(): Promise<void> {
   if (!appState) return;
   const api = await resolveDesktopApi();
   if (api?.saveAppState) {
-    api.saveAppState({ state: appState }).catch((err) =>
-      console.error('[document-pilot] saveAppState failed:', err)
-    );
+    api.saveAppState({ state: appState }).catch((error) => {
+      console.error('[cowork] saveAppState failed:', error);
+    });
   }
 }
 
-async function saveActiveProject(): Promise<void> {
-  if (!activeProject) return;
+async function saveActiveWorkspace(): Promise<void> {
+  if (!activeWorkspace) return;
   const api = await resolveDesktopApi();
-  if (api?.saveProject) {
-    api.saveProject({ project: activeProject }).catch((err) =>
-      console.error('[document-pilot] saveProject failed:', err)
-    );
+  if (api?.saveWorkspace) {
+    api.saveWorkspace({ workspace: activeWorkspace }).catch((error) => {
+      console.error('[cowork] saveWorkspace failed:', error);
+    });
   }
 }
 
 function saveAll(): void {
   void saveAppState();
-  if (activeContext.kind === 'project' && activeProject) {
-    void saveActiveProject();
+  void saveActiveWorkspace();
+}
+
+function workspaceGrantExists(workspace: WorkspaceMetadata, approval: ApprovalRequest): boolean {
+  return approval.targets.some((target) =>
+    workspace.permissionGrants.some((grant) => grant.area === approval.area && grant.target === target)
+  );
+}
+
+function registerWorkspaceGrant(workspace: WorkspaceMetadata, approval: ApprovalRequest): void {
+  if (approval.duration !== 'workspace' || workspaceGrantExists(workspace, approval)) return;
+  for (const target of approval.targets) {
+    workspace.permissionGrants.push({
+      id: uid('grant'),
+      area: approval.area,
+      target,
+      duration: 'workspace',
+      grantedAt: Date.now(),
+      note: approval.title
+    });
   }
-}
-
-// ── Getters ───────────────────────────────────────────────────────
-
-function getActiveThread(): ThreadMetadata | null {
-  if (activeContext.kind === 'project') {
-    if (!activeProject) return null;
-    return activeProject.threads.find((t) => t.id === activeContext.threadId) ?? null;
-  }
-  if (!appState) return null;
-  return appState.threads.find((t) => t.id === activeContext.threadId) ?? null;
-}
-
-function getActiveMessages(): ChatMessageData[] {
-  return getActiveThread()?.messages ?? [];
-}
-
-function getActiveDocuments(): StoredDocument[] {
-  if (activeContext.kind === 'project') {
-    return activeProject?.documents ?? [];
-  }
-  return getActiveThread()?.documents ?? [];
-}
-
-function getActiveDocumentId(): string | null {
-  return getActiveThread()?.activeDocumentId ?? null;
-}
-
-function setActiveDocumentId(docId: string | null): void {
-  const thread = getActiveThread();
-  if (thread) thread.activeDocumentId = docId;
-}
-
-// ── Rendering ─────────────────────────────────────────────────────
-
-function messageHtml(message: ChatMessageData): string {
-  const cls = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
-  const roleLabel = message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Assistant' : 'System';
-  const meta = message.meta ? `<div class="msg-meta">${escapeHtml(message.meta)}</div>` : '';
-  const body = message.role === 'user'
-    ? escapeHtml(message.content)
-    : renderMarkdown(message.content);
-  return `<article class="msg ${cls}"><div class="msg-role">${roleLabel}</div><div class="msg-body">${body}</div>${meta}</article>`;
 }
 
 function updateRuntimeChips(): void {
@@ -592,668 +405,690 @@ function updateRuntimeChips(): void {
   modelChipEl.textContent = `Model: ${settings.model}`;
   reasoningChipEl.textContent = `Reasoning: ${settings.reasoningEffort}`;
   runtimeIndicatorEl.textContent = `Model: ${settings.model} | Reasoning: ${settings.reasoningEffort}`;
+  grantIndicatorEl.textContent = `${activeWorkspace?.permissionGrants.length ?? 0} grants`;
 }
 
-function renderDocumentBar(): void {
-  const docs = getActiveDocuments();
-  const activeDocId = getActiveDocumentId();
-
-  if (docs.length === 0) {
-    documentBarEl.classList.add('hidden');
+function updateFileChip(): void {
+  const attachments = getActiveSession()?.attachments ?? [];
+  if (attachments.length === 0) {
+    fileChipEl.textContent = 'No attachments';
     return;
   }
-
-  documentBarEl.classList.remove('hidden');
-  documentChipsEl.innerHTML = docs
-    .map((doc) => {
-      const activeClass = doc.id === activeDocId ? 'active' : '';
-      return [
-        `<span class="doc-chip ${activeClass}" data-action="select-doc" data-doc-id="${doc.id}">`,
-        escapeHtml(doc.originalFileName),
-        `<span class="doc-chip-remove" data-action="remove-doc" data-doc-id="${doc.id}" data-stored="${escapeHtml(doc.storedFileName)}">&times;</span>`,
-        '</span>'
-      ].join('');
-    })
-    .join('');
+  if (attachments.length === 1) {
+    fileChipEl.textContent = attachments[0].originalFileName;
+    return;
+  }
+  fileChipEl.textContent = `${attachments.length} attachments`;
 }
 
-function renderProjectList(): void {
+function renderWorkspaceList(): void {
   if (!appState) return;
-  const currentThreadId = activeContext.kind === 'project' ? activeContext.threadId : '';
+  const activeWorkspaceId = appState.activeWorkspaceId;
 
-  projectListEl.innerHTML = appState.projectIndex
-    .map((entry) => {
-      const isActiveProject = activeContext.kind === 'project' && activeContext.projectId === entry.id;
-      const docCount = isActiveProject && activeProject ? activeProject.documents.length : 0;
-      const badge = docCount > 0 ? `<span class="doc-badge">${docCount}</span>` : '';
-
-      let threadsHtml = '';
-      if (isActiveProject && activeProject) {
-        threadsHtml = activeProject.threads
-          .map((thread) => {
-            const activeClass = thread.id === currentThreadId ? 'active' : '';
-            return [
-              `<div class="thread-row">`,
-              `<button class="thread-row-btn ${activeClass}" data-action="switch-thread" data-project-id="${entry.id}" data-thread-id="${thread.id}">`,
-              `<span>${escapeHtml(thread.title)}</span>`,
-              `<span class="thread-time">${formatRelativeTime(thread.lastUpdated)}</span>`,
-              '</button>',
-              `<button class="delete-btn" data-action="delete-thread" data-project-id="${entry.id}" data-thread-id="${thread.id}" type="button">&times;</button>`,
-              '</div>'
-            ].join('');
-          })
-          .join('');
-      }
-
+  workspaceListEl.innerHTML = appState.workspaceIndex
+    .map((workspace) => {
+      const active = activeWorkspaceId === workspace.id;
       return [
-        `<div class="project-card" data-project-id="${entry.id}">`,
-        '<div class="project-head">',
-        `<button class="project-title-btn" data-action="switch-project" data-project-id="${entry.id}">${escapeHtml(entry.name)}${badge}</button>`,
-        '<div class="project-tools">',
-        `<button class="ghost ghost-sm" data-action="new-thread" data-project-id="${entry.id}" type="button">+ Thread</button>`,
-        `<button class="delete-btn" data-action="delete-project" data-project-id="${entry.id}" type="button">&times;</button>`,
+        `<div class="workspace-card ${active ? 'active' : ''}">`,
+        '<div class="workspace-headline">',
+        `<button class="workspace-title-btn" data-action="switch-workspace" data-workspace-id="${workspace.id}">`,
+        `<strong>${escapeHtml(workspace.name)}</strong>`,
+        `<span>Updated ${formatRelativeTime(workspace.updatedAt)}</span>`,
+        '</button>',
+        '<div class="workspace-tools">',
+        `<button class="icon-btn" type="button" data-action="delete-workspace" data-workspace-id="${workspace.id}" aria-label="Delete workspace">&times;</button>`,
         '</div>',
         '</div>',
-        isActiveProject ? `<div class="thread-list">${threadsHtml}</div>` : '',
         '</div>'
       ].join('');
     })
     .join('');
 }
 
-function renderThreadList(): void {
-  if (!appState) return;
+function renderSessionList(): void {
+  if (!activeWorkspace) {
+    sessionListEl.innerHTML = '';
+    return;
+  }
 
-  threadListEl.innerHTML = appState.threads
-    .map((thread) => {
-      const isActive = activeContext.kind === 'thread' && activeContext.threadId === thread.id;
-      const activeClass = isActive ? 'active' : '';
-      const docBadge = thread.documents.length > 0 ? `<span class="doc-badge">${thread.documents.length}</span>` : '';
-
+  sessionListEl.innerHTML = activeWorkspace.sessions
+    .map((session) => {
+      const active = appState?.activeSessionId === session.id;
       return [
-        `<button class="thread-btn ${activeClass}" data-action="switch-thread" data-thread-id="${thread.id}">`,
-        `<span>${escapeHtml(thread.title)}</span>`,
-        '<span class="thread-tools">',
-        docBadge,
-        `<span class="thread-time">${formatRelativeTime(thread.lastUpdated)}</span>`,
-        `<span class="delete-btn" data-action="delete-thread" data-thread-id="${thread.id}">&times;</span>`,
-        '</span>',
-        '</button>'
+        `<div class="session-btn-row ${active ? 'active' : ''}">`,
+        `<button class="session-btn" type="button" data-action="switch-session" data-session-id="${session.id}">`,
+        `<strong>${escapeHtml(session.title)}</strong>`,
+        `<span>${session.tasks.length} tasks • ${formatRelativeTime(session.lastUpdated)}</span>`,
+        '</button>',
+        '<div class="session-tools">',
+        `<button class="icon-btn" type="button" data-action="delete-session" data-session-id="${session.id}" aria-label="Delete session">&times;</button>`,
+        '</div>',
+        '</div>'
       ].join('');
     })
     .join('');
 }
 
-function updateActiveInput(): void {
-  const activeDocId = getActiveDocumentId();
-  if (activeDocId && documentCache.has(activeDocId)) {
-    const cached = documentCache.get(activeDocId)!;
-    fileChipEl.textContent = cached.fileName;
-  } else if (activeDocId) {
-    fileChipEl.textContent = 'Loading document...';
-    void loadAndCacheDocument(activeDocId);
-  } else {
-    fileChipEl.textContent = 'No file attached';
+function renderAttachmentBar(): void {
+  const session = getActiveSession();
+  const attachments = session?.attachments ?? [];
+
+  if (attachments.length === 0) {
+    attachmentBarEl.classList.add('hidden');
+    attachmentChipsEl.innerHTML = '';
+    return;
   }
+
+  attachmentBarEl.classList.remove('hidden');
+  attachmentChipsEl.innerHTML = attachments
+    .map((attachment) => {
+      const title = attachment.summary ? ` title="${escapeHtml(truncate(attachment.summary, 160))}"` : '';
+      return [
+        `<span class="attachment-chip"${title}>`,
+        escapeHtml(attachment.originalFileName),
+        `<button type="button" data-action="remove-attachment" data-attachment-id="${attachment.id}" data-stored-file="${escapeHtml(attachment.storedFileName)}" aria-label="Remove attachment">&times;</button>`,
+        '</span>'
+      ].join('');
+    })
+    .join('');
+}
+
+function renderOutputBlock(run: TaskRun): string {
+  if (run.outputBlocks.length === 0) return '';
+  return [
+    '<section class="output-panel">',
+    '<h4>Run Output</h4>',
+    '<div class="output-grid">',
+    run.outputBlocks
+      .map((block) => {
+        const title = block.title ? `<div class="output-block-title">${escapeHtml(block.title)}</div>` : '';
+        const body =
+          block.type === 'markdown'
+            ? renderMarkdown(block.content)
+            : `<p>${escapeHtml(block.content)}</p>`;
+        return `<article class="output-block ${block.type}">${title}${body}</article>`;
+      })
+      .join(''),
+    '</div>',
+    '</section>'
+  ].join('');
+}
+
+function renderPlan(run: TaskRun): string {
+  if (run.plan.length === 0) return '';
+  return [
+    '<section class="plan-panel">',
+    '<h4>Planned Workflow</h4>',
+    '<div class="plan-list">',
+    run.plan
+      .map(
+        (step, index) => `
+          <article class="plan-step">
+            <div class="plan-step-head">
+              <div class="plan-step-title">
+                <span class="step-num ${step.status}">${index + 1}</span>
+                <strong>${escapeHtml(step.title)}</strong>
+              </div>
+              <span class="status-pill ${step.status}">${escapeHtml(formatStatusLabel(step.status))}</span>
+            </div>
+            <p>${escapeHtml(step.description)}</p>
+            <div class="step-tags">
+              <span class="tag">${escapeHtml(step.toolFamily)}</span>
+              <span class="tag">${escapeHtml(step.risk)}</span>
+              ${step.requiresApproval ? '<span class="tag">approval gate</span>' : ''}
+            </div>
+          </article>
+        `
+      )
+      .join(''),
+    '</div>',
+    '</section>'
+  ].join('');
+}
+
+function renderApprovals(task: TaskRecord, run: TaskRun): string {
+  if (run.approvals.length === 0) return '';
+
+  return [
+    '<section class="approval-panel">',
+    '<h4>Approval Checkpoints</h4>',
+    '<div class="approval-grid">',
+    run.approvals
+      .map((approval) => {
+        const targets = approval.targets.length > 0 ? approval.targets.map((target) => `<li>${escapeHtml(target)}</li>`).join('') : '<li>General scope</li>';
+        const actions =
+          approval.status === 'pending'
+            ? `
+              <div class="approval-actions">
+                <button class="primary" type="button" data-action="resolve-approval" data-task-id="${task.id}" data-approval-id="${approval.id}" data-decision="approve">Approve</button>
+                <button class="ghost" type="button" data-action="resolve-approval" data-task-id="${task.id}" data-approval-id="${approval.id}" data-decision="deny">Deny</button>
+              </div>
+            `
+            : `<span class="approval-state ${approval.status}">${escapeHtml(approval.status)}</span>`;
+
+        return `
+          <article class="approval-card ${approval.status}">
+            <div class="plan-step-head">
+              <strong>${escapeHtml(approval.title)}</strong>
+              <span class="approval-state ${approval.status}">${escapeHtml(approval.status)}</span>
+            </div>
+            <p>${escapeHtml(approval.summary)}</p>
+            <ul>${targets}</ul>
+            <p><strong>Why:</strong> ${escapeHtml(approval.reason)}</p>
+            <p><strong>Scope:</strong> ${escapeHtml(approval.area)} • ${escapeHtml(approval.duration)} • ${approval.reversible ? 'reversible where possible' : 'not easily reversible'}</p>
+            ${actions}
+          </article>
+        `;
+      })
+      .join(''),
+    '</div>',
+    '</section>'
+  ].join('');
+}
+
+function renderArtifacts(run: TaskRun): string {
+  if (run.artifacts.length === 0) return '';
+  return [
+    '<section class="artifact-panel">',
+    '<h4>Artifacts</h4>',
+    '<div class="artifact-grid">',
+    run.artifacts
+      .map((artifact) => {
+        const fileName = artifact.fileName ? `<span class="tag">${escapeHtml(artifact.fileName)}</span>` : '';
+        const preview = artifact.previewContent ? `<pre>${escapeHtml(artifact.previewContent)}</pre>` : '';
+        return `
+          <article class="artifact-card">
+            <strong>${escapeHtml(artifact.title)}</strong>
+            <div class="step-tags">
+              <span class="tag">${escapeHtml(artifact.kind)}</span>
+              ${fileName}
+            </div>
+            <p>${escapeHtml(artifact.summary)}</p>
+            ${preview}
+          </article>
+        `;
+      })
+      .join(''),
+    '</div>',
+    '</section>'
+  ].join('');
+}
+
+function renderTaskCard(task: TaskRecord): string {
+  const latestRun = task.runs.at(-1);
+  const metaLine = latestRun
+    ? `${latestRun.model} • ${latestRun.latencyMs}ms • ${formatRelativeTime(task.updatedAt)}`
+    : `Created ${formatRelativeTime(task.createdAt)}`;
+  const summary = latestRun?.summary
+    ? `<section class="summary-panel"><h4>Run Summary</h4><p>${escapeHtml(latestRun.summary)}</p></section>`
+    : '';
+
+  return [
+    '<article class="task-card">',
+    '<header class="task-header">',
+    `<div class="task-prompt">${escapeHtml(task.prompt)}</div>`,
+    '<div class="task-meta">',
+    latestRun ? `<span class="status-pill ${latestRun.status}">${escapeHtml(formatStatusLabel(latestRun.status))}</span>` : '',
+    `<span class="meta-note">${escapeHtml(metaLine)}</span>`,
+    '</div>',
+    '</header>',
+    summary,
+    latestRun ? renderPlan(latestRun) : '',
+    latestRun ? renderApprovals(task, latestRun) : '',
+    latestRun ? renderOutputBlock(latestRun) : '',
+    latestRun ? renderArtifacts(latestRun) : '',
+    latestRun?.warning
+      ? `<section class="output-panel"><div class="output-grid"><article class="output-block warning"><div class="output-block-title">Warning</div><p>${escapeHtml(latestRun.warning)}</p></article></div></section>`
+      : '',
+    '</article>'
+  ].join('');
+}
+
+function renderTaskFeed(): void {
+  const session = getActiveSession();
+  if (!session || session.tasks.length === 0) {
+    taskFeedEl.innerHTML = [
+      '<section class="empty-state">',
+      '<h3>Delegate real work in plain English</h3>',
+      '<p>Cowork plans multi-step tasks, stages sensitive actions behind approvals, and keeps every run visible and reviewable.</p>',
+      '<div class="hint-list">',
+      '<div class="hint-pill">“Create a weekly operations brief from these CSV exports and stage a PDF plus deck.”</div>',
+      '<div class="hint-pill">“Research three competitors, cite sources, and draft a comparison memo.”</div>',
+      '<div class="hint-pill">“Organize the invoices in this folder, but show me the rename plan before anything destructive.”</div>',
+      '</div>',
+      '</section>'
+    ].join('');
+    return;
+  }
+
+  taskFeedEl.innerHTML = session.tasks
+    .slice()
+    .reverse()
+    .map((task) => renderTaskCard(task))
+    .join('');
+
+  scrollToPendingApproval();
+}
+
+function scrollToPendingApproval(): void {
+  const card = taskFeedEl.querySelector<HTMLElement>('.approval-card.pending');
+  if (!card) return;
+  const feedRect = taskFeedEl.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const isVisible = cardRect.top >= feedRect.top && cardRect.bottom <= feedRect.bottom;
+  if (!isVisible) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function applyContext(): void {
-  const messages = getActiveMessages();
-  const thread = getActiveThread();
-
-  if (activeContext.kind === 'project' && activeProject) {
-    threadTitleEl.textContent = thread?.title ?? 'Thread';
-    threadSubtitleEl.textContent = `${activeProject.name} • ${messages.length} messages`;
+  const session = getActiveSession();
+  if (activeWorkspace && session) {
+    sessionTitleEl.textContent = session.title;
+    sessionSubtitleEl.textContent = `${activeWorkspace.name} • ${session.tasks.length} tasks • ${session.attachments.length} files • ${activeWorkspace.permissionGrants.length} grants`;
+  } else if (activeWorkspace) {
+    sessionTitleEl.textContent = activeWorkspace.name;
+    sessionSubtitleEl.textContent = 'Choose a session to continue.';
   } else {
-    threadTitleEl.textContent = thread?.title ?? 'Thread';
-    threadSubtitleEl.textContent = `${messages.length} messages`;
+    sessionTitleEl.textContent = 'Cowork';
+    sessionSubtitleEl.textContent = 'Create a workspace to start delegating tasks.';
   }
 
-  chatLogEl.innerHTML = '';
-  if (messages.length === 0) {
-    chatLogEl.innerHTML = '<article class="msg assistant"><div class="msg-role">System</div><div class="msg-body">Attach a CSV, Excel, or PDF file and ask your first question.</div></article>';
-  } else {
-    chatLogEl.innerHTML = messages.map((item) => messageHtml(item)).join('');
-  }
-  chatLogEl.scrollTop = chatLogEl.scrollHeight;
-
-  updateActiveInput();
-  renderDocumentBar();
-  renderProjectList();
-  renderThreadList();
+  updateRuntimeChips();
+  updateFileChip();
+  renderWorkspaceList();
+  renderSessionList();
+  renderAttachmentBar();
+  renderTaskFeed();
 }
 
-// ── Document Loading ──────────────────────────────────────────────
+function createDefaultWorkspace(name = 'Cowork Workspace'): WorkspaceMetadata {
+  const now = Date.now();
+  return {
+    id: uid('workspace'),
+    name,
+    sessions: [
+      {
+        id: uid('session'),
+        title: 'General',
+        tasks: [],
+        attachments: [],
+        lastUpdated: now
+      }
+    ],
+    permissionGrants: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
 
-async function loadAndCacheDocument(docId: string): Promise<void> {
-  const docs = getActiveDocuments();
-  const doc = docs.find((d) => d.id === docId);
-  if (!doc) return;
-
-  const targetId = activeContext.kind === 'project' ? activeContext.projectId : activeContext.threadId;
+async function switchToWorkspace(workspaceId: string): Promise<void> {
+  if (!appState) return;
   const api = await resolveDesktopApi();
-  if (!api?.readDocument) return;
+  if (!api?.loadWorkspace) return;
 
-  try {
-    const result = await api.readDocument({ targetId, storedFileName: doc.storedFileName });
+  setStatus('Loading workspace...');
+  const { workspace } = await api.loadWorkspace({ workspaceId });
+  if (!workspace) {
+    setStatus('Workspace not found on disk.');
+    return;
+  }
 
-    if (doc.kind === 'pdf') {
-      documentCache.set(docId, {
-        kind: 'stored-pdf',
-        fileData: result.fileData,
-        fileName: doc.originalFileName,
-        docId
-      });
-    } else {
-      const blob = new Blob([result.fileData]);
-      const file = new File([blob], doc.originalFileName);
-      const dataset = await parseDataset(file);
-      documentCache.set(docId, {
-        kind: 'stored-tabular',
-        dataset,
-        fileName: doc.originalFileName,
-        docId
-      });
+  activeWorkspace = workspace;
+  appState.activeWorkspaceId = workspaceId;
+  const currentActiveSessionId = appState.activeSessionId;
+  appState.activeSessionId =
+    currentActiveSessionId && workspace.sessions.some((session) => session.id === currentActiveSessionId)
+      ? currentActiveSessionId
+      : workspace.sessions[0]?.id ?? null;
+
+  void saveAppState();
+  applyContext();
+  setStatus('Ready.');
+}
+
+function switchSession(sessionId: string): void {
+  if (!appState || !activeWorkspace) return;
+  if (!activeWorkspace.sessions.some((session) => session.id === sessionId)) return;
+  appState.activeSessionId = sessionId;
+  void saveAppState();
+  applyContext();
+}
+
+async function createWorkspace(): Promise<void> {
+  const name = window.prompt('Workspace name', 'New Workspace')?.trim();
+  if (!name || !appState) return;
+
+  activeWorkspace = createDefaultWorkspace(name);
+  syncWorkspaceIndex(activeWorkspace);
+  appState.activeWorkspaceId = activeWorkspace.id;
+  appState.activeSessionId = activeWorkspace.sessions[0]?.id ?? null;
+
+  saveAll();
+  applyContext();
+  setStatus(`Created workspace "${name}".`);
+}
+
+function createSession(workspaceId: string): void {
+  if (!appState || !activeWorkspace || activeWorkspace.id !== workspaceId) return;
+  const now = Date.now();
+  const session: SessionRecord = {
+    id: uid('session'),
+    title: 'New Session',
+    tasks: [],
+    attachments: [],
+    lastUpdated: now
+  };
+
+  activeWorkspace.sessions.unshift(session);
+  activeWorkspace.updatedAt = now;
+  syncWorkspaceIndex(activeWorkspace);
+  appState.activeSessionId = session.id;
+  saveAll();
+  applyContext();
+  setStatus('New session created.');
+}
+
+async function deleteWorkspace(workspaceId: string): Promise<void> {
+  if (!appState) return;
+  const entry = appState.workspaceIndex.find((workspace) => workspace.id === workspaceId);
+  if (!entry) return;
+
+  const confirmed = await showConfirm(`Delete workspace "${entry.name}" and all of its sessions?`);
+  if (!confirmed) return;
+
+  const api = await resolveDesktopApi();
+  if (api?.deleteWorkspace) {
+    await api.deleteWorkspace({ workspaceId }).catch(() => undefined);
+  }
+
+  appState.workspaceIndex = appState.workspaceIndex.filter((workspace) => workspace.id !== workspaceId);
+
+  if (appState.workspaceIndex.length === 0) {
+    activeWorkspace = createDefaultWorkspace();
+    syncWorkspaceIndex(activeWorkspace);
+    appState.activeWorkspaceId = activeWorkspace.id;
+    appState.activeSessionId = activeWorkspace.sessions[0]?.id ?? null;
+    saveAll();
+    applyContext();
+    return;
+  }
+
+  if (appState.activeWorkspaceId === workspaceId) {
+    await switchToWorkspace(appState.workspaceIndex[0].id);
+  } else {
+    void saveAppState();
+    renderWorkspaceList();
+  }
+}
+
+async function deleteSession(sessionId: string): Promise<void> {
+  if (!activeWorkspace || !appState) return;
+  const session = activeWorkspace.sessions.find((entry) => entry.id === sessionId);
+  if (!session) return;
+  if (activeWorkspace.sessions.length <= 1) {
+    setStatus('A workspace needs at least one session.');
+    return;
+  }
+
+  const confirmed = await showConfirm(`Delete session "${session.title}" and its task history?`);
+  if (!confirmed) return;
+
+  for (const attachment of session.attachments) {
+    const api = await resolveDesktopApi();
+    if (api?.deleteAttachment) {
+      await api
+        .deleteAttachment({ targetId: session.id, attachmentId: attachment.id, storedFileName: attachment.storedFileName })
+        .catch(() => undefined);
     }
-
-    updateActiveInput();
-  } catch (error) {
-    console.error('[document-pilot] failed to load document:', error);
-    setStatus(`Failed to load document: ${(error as Error).message}`);
   }
+
+  activeWorkspace.sessions = activeWorkspace.sessions.filter((entry) => entry.id !== sessionId);
+  activeWorkspace.updatedAt = Date.now();
+  syncWorkspaceIndex(activeWorkspace);
+
+  if (appState.activeSessionId === sessionId) {
+    appState.activeSessionId = activeWorkspace.sessions[0]?.id ?? null;
+  }
+
+  saveAll();
+  applyContext();
 }
 
-// ── Document Attachment ───────────────────────────────────────────
+function isTextLike(file: File): boolean {
+  const lower = file.name.toLowerCase();
+  return (
+    file.type.startsWith('text/') ||
+    file.type.includes('json') ||
+    file.type.includes('csv') ||
+    lower.endsWith('.md') ||
+    lower.endsWith('.txt') ||
+    lower.endsWith('.json') ||
+    lower.endsWith('.csv') ||
+    lower.endsWith('.log')
+  );
+}
 
-async function attachDocumentToCurrentContext(file: File): Promise<void> {
+async function buildAttachmentSummary(file: File): Promise<string> {
+  if (isTextLike(file)) {
+    const text = await file.text();
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (!normalized) return 'Text attachment with no readable content.';
+    return truncate(normalized, 400);
+  }
+
+  if (file.type.startsWith('image/')) {
+    return `Image attachment (${file.type || 'unknown format'}, ${Math.round(file.size / 1024)} KB).`;
+  }
+
+  return `Binary attachment (${file.type || 'unknown format'}, ${Math.round(file.size / 1024)} KB).`;
+}
+
+async function attachFilesToCurrentSession(files: FileList | null): Promise<void> {
+  if (!files || files.length === 0 || !activeWorkspace) return;
+  const session = getActiveSession();
+  if (!session) {
+    setStatus('Create a session before adding files.');
+    return;
+  }
+
   const api = await resolveDesktopApi();
-  if (!api?.copyDocument) {
+  if (!api?.copyAttachment) {
     setStatus('Desktop bridge unavailable.');
     return;
   }
 
-  const targetId = activeContext.kind === 'project' ? activeContext.projectId : activeContext.threadId;
-  const documentId = uid('doc');
-  const fileData = await file.arrayBuffer();
+  setStatus(`Saving ${files.length} attachment${files.length > 1 ? 's' : ''}...`);
 
-  setStatus(`Saving ${file.name}...`);
-
-  try {
-    const { storedDocument } = await api.copyDocument({
-      targetId,
-      documentId,
+  for (const file of Array.from(files)) {
+    const attachmentId = uid('attachment');
+    const fileData = await file.arrayBuffer();
+    const summary = await buildAttachmentSummary(file);
+    const { attachment } = await api.copyAttachment({
+      targetId: session.id,
+      attachmentId,
       originalFileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
       fileData
     });
+    session.attachments.unshift({ ...attachment, summary });
+  }
 
-    // Add to the in-memory model
-    if (activeContext.kind === 'project' && activeProject) {
-      activeProject.documents.push(storedDocument);
-      activeProject.updatedAt = Date.now();
-    } else if (activeContext.kind === 'thread') {
-      const thread = getActiveThread();
-      if (thread) {
-        thread.documents.push(storedDocument);
-        thread.lastUpdated = Date.now();
+  session.lastUpdated = Date.now();
+  activeWorkspace.updatedAt = Date.now();
+  syncWorkspaceIndex(activeWorkspace);
+  saveAll();
+  applyContext();
+  setStatus('Attachments added.');
+}
+
+async function removeAttachment(attachmentId: string, storedFileName: string): Promise<void> {
+  const session = getActiveSession();
+  const api = await resolveDesktopApi();
+  if (!session || !api?.deleteAttachment) return;
+
+  await api
+    .deleteAttachment({ targetId: session.id, attachmentId, storedFileName })
+    .catch(() => undefined);
+
+  session.attachments = session.attachments.filter((attachment) => attachment.id !== attachmentId);
+  session.lastUpdated = Date.now();
+  if (activeWorkspace) {
+    activeWorkspace.updatedAt = Date.now();
+    syncWorkspaceIndex(activeWorkspace);
+  }
+  saveAll();
+  applyContext();
+}
+
+function createDraftingRun(model: string): TaskRun {
+  const now = Date.now();
+  return {
+    id: uid('run'),
+    status: 'drafting_plan',
+    model,
+    latencyMs: 0,
+    summary: 'Cowork is drafting a supervised execution plan.',
+    plan: [],
+    approvals: [],
+    outputBlocks: [
+      {
+        id: uid('block'),
+        type: 'status',
+        title: 'Drafting plan',
+        content: 'Analyzing the task, checking the active context, and deciding whether any approvals are required.'
       }
-    }
-
-    // Parse and cache locally
-    const startedAt = performance.now();
-    if (isPdfFile(file)) {
-      documentCache.set(documentId, { kind: 'stored-pdf', fileData, fileName: file.name, docId: documentId });
-      lastParseMs = Number((performance.now() - startedAt).toFixed(2));
-    } else {
-      const dataset = await parseDataset(file);
-      documentCache.set(documentId, { kind: 'stored-tabular', dataset, fileName: file.name, docId: documentId });
-      lastParseMs = Number((performance.now() - startedAt).toFixed(2));
-    }
-
-    // Set as active document
-    setActiveDocumentId(documentId);
-
-    saveAll();
-    applyContext();
-    setStatus(`Attached ${file.name}.`);
-  } catch (error) {
-    setStatus(`Failed to attach: ${(error as Error).message}`);
-  }
-}
-
-async function removeDocument(docId: string, storedFileName: string): Promise<void> {
-  const api = await resolveDesktopApi();
-  if (!api?.deleteDocument) return;
-
-  const targetId = activeContext.kind === 'project' ? activeContext.projectId : activeContext.threadId;
-
-  try {
-    await api.deleteDocument({ targetId, documentId: docId, storedFileName });
-  } catch {
-    // File may already be gone
-  }
-
-  if (activeContext.kind === 'project' && activeProject) {
-    activeProject.documents = activeProject.documents.filter((d) => d.id !== docId);
-    activeProject.updatedAt = Date.now();
-  } else if (activeContext.kind === 'thread') {
-    const thread = getActiveThread();
-    if (thread) {
-      thread.documents = thread.documents.filter((d) => d.id !== docId);
-      thread.lastUpdated = Date.now();
-    }
-  }
-
-  documentCache.delete(docId);
-
-  // Clear active document if it was removed
-  if (getActiveDocumentId() === docId) {
-    const remaining = getActiveDocuments();
-    setActiveDocumentId(remaining.length > 0 ? remaining[0].id : null);
-  }
-
-  saveAll();
-  applyContext();
-}
-
-// ── Project CRUD ──────────────────────────────────────────────────
-
-async function createProject(): Promise<void> {
-  if (!appState) return;
-
-  const name = window.prompt('Project name', 'New Project')?.trim();
-  if (!name) return;
-
-  const projectId = uid('project');
-  const threadId = uid('thread');
-  const now = Date.now();
-
-  const project: ProjectMetadata = {
-    id: projectId,
-    name,
-    documents: [],
-    threads: [{
-      id: threadId,
-      title: 'New Thread',
-      messages: [],
-      documents: [],
-      activeDocumentId: null,
-      lastUpdated: now
-    }],
+    ],
+    artifacts: [],
     createdAt: now,
-    updatedAt: now
+    startedAt: now
   };
-
-  appState.projectIndex.unshift({ id: projectId, name, updatedAt: now });
-  appState.activeProjectId = projectId;
-  appState.activeThreadId = threadId;
-  activeProject = project;
-  activeContext = { kind: 'project', projectId, threadId };
-
-  saveAll();
-  applyContext();
-
-  // Prompt for first document
-  fileInput.click();
 }
 
-async function deleteProject(projectId: string): Promise<void> {
-  if (!appState) return;
-
-  const entry = appState.projectIndex.find((p) => p.id === projectId);
-  if (!entry) return;
-
-  const confirmed = await showConfirm(`Delete project "${entry.name}" and all its documents?`);
-  if (!confirmed) return;
-
-  const api = await resolveDesktopApi();
-  if (api?.deleteProject) {
-    await api.deleteProject({ projectId }).catch(() => {});
-  }
-
-  appState.projectIndex = appState.projectIndex.filter((p) => p.id !== projectId);
-
-  // Clear active project if it was the deleted one
-  if (activeContext.kind === 'project' && activeContext.projectId === projectId) {
-    if (appState.projectIndex.length > 0) {
-      void switchToProject(appState.projectIndex[0].id);
-    } else if (appState.threads.length > 0) {
-      switchToStandaloneThread(appState.threads[0].id);
-    } else {
-      // Create a fresh project
-      await createProject();
-    }
-  }
-
-  void saveAppState();
-  renderProjectList();
-}
-
-async function switchToProject(projectId: string): Promise<void> {
-  if (!appState) return;
-
-  const api = await resolveDesktopApi();
-  if (!api?.loadProject) return;
-
-  setStatus('Loading project...');
-  const { project } = await api.loadProject({ projectId });
-
-  if (!project) {
-    setStatus('Project not found on disk.');
-    return;
-  }
-
-  activeProject = project;
-  const threadId = project.threads[0]?.id ?? '';
-  activeContext = { kind: 'project', projectId, threadId };
-  appState.activeProjectId = projectId;
-  appState.activeThreadId = threadId;
-
-  void saveAppState();
-  applyContext();
-  setStatus('');
-
-  // Pre-load active document if set
-  const activeDocId = getActiveDocumentId();
-  if (activeDocId && !documentCache.has(activeDocId)) {
-    void loadAndCacheDocument(activeDocId);
-  }
-}
-
-function switchProjectThread(projectId: string, threadId: string): void {
-  if (!appState || !activeProject) return;
-  if (activeContext.kind !== 'project' || activeContext.projectId !== projectId) return;
-
-  const thread = activeProject.threads.find((t) => t.id === threadId);
-  if (!thread) return;
-
-  activeContext = { kind: 'project', projectId, threadId };
-  appState.activeThreadId = threadId;
-
-  void saveAppState();
-  applyContext();
-
-  // Load thread's active document if needed
-  const docId = thread.activeDocumentId;
-  if (docId && !documentCache.has(docId)) {
-    void loadAndCacheDocument(docId);
-  }
-}
-
-function createProjectThread(projectId: string): void {
-  if (!appState || !activeProject || activeProject.id !== projectId) return;
-
-  const threadId = uid('thread');
-  const thread: ThreadMetadata = {
-    id: threadId,
-    title: 'New Thread',
-    messages: [],
-    documents: [],
-    activeDocumentId: null,
-    lastUpdated: Date.now()
-  };
-
-  activeProject.threads.unshift(thread);
-  activeProject.updatedAt = Date.now();
-  activeContext = { kind: 'project', projectId, threadId };
-  appState.activeThreadId = threadId;
-
-  setStatus('New thread created.');
-  saveAll();
-  applyContext();
-}
-
-async function deleteProjectThread(projectId: string, threadId: string): Promise<void> {
-  if (!appState || !activeProject || activeProject.id !== projectId) return;
-
-  const thread = activeProject.threads.find((t) => t.id === threadId);
-  if (!thread) return;
-
-  // Don't allow deleting the last thread
-  if (activeProject.threads.length <= 1) {
-    setStatus('Cannot delete the only thread in a project.');
-    return;
-  }
-
-  const confirmed = await showConfirm(`Delete thread "${thread.title}"?`);
-  if (!confirmed) return;
-
-  activeProject.threads = activeProject.threads.filter((t) => t.id !== threadId);
-  activeProject.updatedAt = Date.now();
-
-  // If we deleted the active thread, switch to the first remaining one
-  if (activeContext.kind === 'project' && activeContext.threadId === threadId) {
-    const nextThread = activeProject.threads[0];
-    activeContext = { kind: 'project', projectId, threadId: nextThread.id };
-    appState.activeThreadId = nextThread.id;
-  }
-
-  saveAll();
-  applyContext();
-}
-
-// ── Standalone Thread CRUD ────────────────────────────────────────
-
-function createStandaloneThread(): void {
-  if (!appState) return;
-
-  const threadId = uid('thread');
+function createFailedRun(model: string, message: string): TaskRun {
   const now = Date.now();
-
-  const thread: ThreadMetadata = {
-    id: threadId,
-    title: 'New Thread',
-    messages: [],
-    documents: [],
-    activeDocumentId: null,
-    lastUpdated: now
+  return {
+    id: uid('run'),
+    status: 'failed',
+    model,
+    latencyMs: 0,
+    summary: 'The cowork run failed before execution could start.',
+    plan: [],
+    approvals: [],
+    outputBlocks: [
+      {
+        id: uid('block'),
+        type: 'warning',
+        title: 'Run failed',
+        content: message
+      }
+    ],
+    artifacts: [],
+    createdAt: now,
+    startedAt: now,
+    completedAt: now
   };
-
-  appState.threads.unshift(thread);
-  appState.activeProjectId = null;
-  appState.activeThreadId = threadId;
-  activeProject = null;
-  activeContext = { kind: 'thread', threadId };
-
-  void saveAppState();
-  applyContext();
 }
 
-function switchToStandaloneThread(threadId: string): void {
-  if (!appState) return;
-
-  const thread = appState.threads.find((t) => t.id === threadId);
-  if (!thread) return;
-
-  activeProject = null;
-  activeContext = { kind: 'thread', threadId };
-  appState.activeProjectId = null;
-  appState.activeThreadId = threadId;
-
-  void saveAppState();
-  applyContext();
-
-  // Load active document if needed
-  const docId = thread.activeDocumentId;
-  if (docId && !documentCache.has(docId)) {
-    void loadAndCacheDocument(docId);
-  }
+function taskContextPrompts(session: SessionRecord, excludeTaskId?: string): string[] {
+  return session.tasks
+    .filter((task) => task.id !== excludeTaskId)
+    .slice(-6)
+    .map((task) => task.prompt);
 }
 
-async function deleteStandaloneThread(threadId: string): Promise<void> {
-  if (!appState) return;
-
-  const thread = appState.threads.find((t) => t.id === threadId);
-  if (!thread) return;
-
-  const confirmed = await showConfirm(`Delete thread "${thread.title}"?`);
-  if (!confirmed) return;
-
-  // Delete documents from disk
-  const api = await resolveDesktopApi();
-  for (const doc of thread.documents) {
-    if (api?.deleteDocument) {
-      await api.deleteDocument({ targetId: threadId, documentId: doc.id, storedFileName: doc.storedFileName }).catch(() => {});
-    }
-  }
-
-  appState.threads = appState.threads.filter((t) => t.id !== threadId);
-
-  if (activeContext.kind === 'thread' && activeContext.threadId === threadId) {
-    if (appState.threads.length > 0) {
-      switchToStandaloneThread(appState.threads[0].id);
-    } else if (appState.projectIndex.length > 0) {
-      void switchToProject(appState.projectIndex[0].id);
-    } else {
-      await createProject();
-    }
-  }
-
-  void saveAppState();
-  renderThreadList();
-}
-
-// ── Add Message ───────────────────────────────────────────────────
-
-function addMessage(role: ChatMessageData['role'], content: string, meta?: string): void {
-  const msg: ChatMessageData = {
-    id: uid('msg'),
-    role,
-    content,
-    createdAt: Date.now(),
-    meta
-  };
-
-  const thread = getActiveThread();
-  if (!thread) return;
-
-  thread.messages.push(msg);
-  thread.lastUpdated = Date.now();
-  if (thread.title === 'New Thread' && role === 'user') {
-    thread.title = content.slice(0, 42).trim() || 'New Thread';
-  }
-  if (activeContext.kind === 'project' && activeProject) {
-    activeProject.updatedAt = Date.now();
-  }
-
-  saveAll();
-  applyContext();
-}
-
-// ── File Attach Handler ───────────────────────────────────────────
-
-async function handleFileAttach(): Promise<void> {
-  if (!(await ensureAuthReady())) {
-    fileInput.value = '';
-    return;
-  }
-
-  const file = fileInput.files?.[0];
-  if (!file) return;
-
-  sendButton.disabled = true;
-  setStatus(`Loading ${file.name}...`);
-
-  try {
-    await attachDocumentToCurrentContext(file);
-  } catch (error) {
-    setStatus(`Attach failed: ${(error as Error).message}`);
-  } finally {
-    sendButton.disabled = false;
-    fileInput.value = '';
-  }
-}
-
-// ── Send Prompt ───────────────────────────────────────────────────
-
-function collectHistory(): ConversationMessage[] {
-  return getActiveMessages()
-    .filter((msg): msg is ChatMessageData & { role: 'user' | 'assistant' } => msg.role === 'user' || msg.role === 'assistant')
-    .map((msg) => ({ role: msg.role, content: msg.content }));
-}
-
-function getSelectedInput(): SelectedInput | undefined {
-  const docId = getActiveDocumentId();
-  if (docId) return documentCache.get(docId);
-  return undefined;
+function serializeAttachments(session: SessionRecord) {
+  return session.attachments.map((attachment) => ({
+    id: attachment.id,
+    fileName: attachment.originalFileName,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    summary: attachment.summary
+  }));
 }
 
 async function sendPrompt(): Promise<void> {
   if (!(await ensureAuthReady())) return;
+  if (!activeWorkspace) return;
 
-  const prompt = promptInput.value.trim();
-  if (!prompt) {
-    setStatus('Enter a prompt first.');
+  const session = getActiveSession();
+  if (!session) {
+    setStatus('Select a session first.');
     return;
   }
 
-  const selectedInput = getSelectedInput();
-  if (!selectedInput) {
-    setStatus('Attach a CSV, Excel, or PDF file first.');
+  const prompt = promptInput.value.trim();
+  if (!prompt) {
+    setStatus('Enter a task first.');
     return;
   }
 
   const api = await resolveDesktopApi();
-  if (!api || typeof api.chat !== 'function') {
+  if (!api?.startRun) {
     setStatus('Desktop bridge unavailable. Restart the app and try again.');
     return;
   }
 
   const settings = getSettings();
+  const now = Date.now();
+  const task: TaskRecord = {
+    id: uid('task'),
+    prompt,
+    createdAt: now,
+    updatedAt: now,
+    runs: [createDraftingRun(settings.model)]
+  };
+
+  if (session.title === 'New Session' || session.title === 'General') {
+    session.title = truncate(prompt, 46);
+  }
+
+  session.tasks.push(task);
+  session.lastUpdated = now;
+  activeWorkspace.updatedAt = now;
+  syncWorkspaceIndex(activeWorkspace);
+  promptInput.value = '';
+  promptInput.style.height = 'auto';
+  saveAll();
+  applyContext();
+
   sendButton.disabled = true;
   promptInput.disabled = true;
-
-  const startedAt = performance.now();
-  const assistantMetaBase = `${settings.model} • ${settings.reasoningEffort}`;
-  const history = collectHistory();
-  addMessage('user', prompt, selectedInput.fileName);
-  promptInput.value = '';
+  setStatus('Cowork is drafting the run...');
 
   try {
-    setStatus('Thinking...');
-
-    let document: DocumentContext;
-
-    if (selectedInput.kind === 'tabular' || selectedInput.kind === 'stored-tabular') {
-      document = {
-        kind: 'tabular',
-        fileName: selectedInput.fileName,
-        textContent: buildTabularTextContent(selectedInput.dataset),
-        rowCount: selectedInput.dataset.rows.length
-      };
-    } else if (selectedInput.kind === 'stored-pdf') {
-      document = {
-        kind: 'pdf',
-        fileName: selectedInput.fileName,
-        textContent: '',
-        pdfData: selectedInput.fileData
-      };
-    } else {
-      const pdfData = await selectedInput.file.arrayBuffer();
-      document = {
-        kind: 'pdf',
-        fileName: selectedInput.fileName,
-        textContent: '',
-        pdfData
-      };
-    }
-
-    const response: ChatResponse = await api.chat({
+    const startedAt = performance.now();
+    const response: StartRunResponse = await api.startRun({
       prompt,
-      document,
-      history,
+      workspaceName: activeWorkspace.name,
+      sessionTitle: session.title,
+      recentTaskPrompts: taskContextPrompts(session, task.id),
+      attachments: serializeAttachments(session),
+      grants: activeWorkspace.permissionGrants,
       model: settings.model,
       reasoningEffort: settings.reasoningEffort
     });
 
-    addMessage('assistant', response.answer, `${assistantMetaBase} • ${response.source}`);
+    task.runs = [response.run];
+    task.updatedAt = Date.now();
+    session.lastUpdated = Date.now();
+    activeWorkspace.updatedAt = Date.now();
+    syncWorkspaceIndex(activeWorkspace);
+    saveAll();
+    applyContext();
 
     const totalMs = Number((performance.now() - startedAt).toFixed(2));
-    setMetrics(`File: ${selectedInput.fileName} | Parse: ${lastParseMs}ms | AI: ${response.latencyMs}ms | Total: ${totalMs}ms`);
-    setStatus(response.warning ? `Done (${response.warning})` : 'Done.');
-    saveAll();
+    setMetrics(
+      `${session.attachments.length} files • ${response.run.latencyMs}ms run • ${totalMs}ms total`
+    );
+    setStatus(response.run.status === 'awaiting_approval' ? 'Run is waiting for approval.' : 'Run ready.');
   } catch (error) {
-    addMessage('assistant', `Request failed: ${(error as Error).message}`, assistantMetaBase);
-    setStatus(`Request failed: ${(error as Error).message}`);
+    task.runs = [createFailedRun(settings.model, (error as Error).message)];
+    task.updatedAt = Date.now();
+    session.lastUpdated = Date.now();
+    activeWorkspace.updatedAt = Date.now();
+    syncWorkspaceIndex(activeWorkspace);
+    saveAll();
+    applyContext();
+    setStatus(`Run failed: ${(error as Error).message}`);
   } finally {
     sendButton.disabled = false;
     promptInput.disabled = false;
@@ -1261,14 +1096,79 @@ async function sendPrompt(): Promise<void> {
   }
 }
 
-// ── Settings ──────────────────────────────────────────────────────
+async function resolveApproval(taskId: string, approvalId: string, decision: 'approve' | 'deny'): Promise<void> {
+  if (!(await ensureAuthReady()) || !activeWorkspace) return;
+
+  const session = getActiveSession();
+  const task = session?.tasks.find((entry) => entry.id === taskId);
+  const run = task?.runs.at(-1);
+  if (!session || !task || !run) return;
+
+  const approval = run.approvals.find((entry) => entry.id === approvalId);
+  if (!approval) return;
+
+  const api = await resolveDesktopApi();
+  if (!api?.resolveApproval) {
+    setStatus('Desktop bridge unavailable.');
+    return;
+  }
+
+  const settings = getSettings();
+  const prospectiveGrants =
+    decision === 'approve' && approval.duration === 'workspace' && !workspaceGrantExists(activeWorkspace, approval)
+      ? [
+          ...activeWorkspace.permissionGrants,
+          ...approval.targets.map((target) => ({
+            id: uid('grant'),
+            area: approval.area,
+            target,
+            duration: 'workspace' as const,
+            grantedAt: Date.now(),
+            note: approval.title
+          }))
+        ]
+      : activeWorkspace.permissionGrants;
+
+  setStatus(decision === 'approve' ? 'Recording approval...' : 'Blocking run...');
+
+  try {
+    const response: ResolveApprovalResponse = await api.resolveApproval({
+      prompt: task.prompt,
+      workspaceName: activeWorkspace.name,
+      sessionTitle: session.title,
+      recentTaskPrompts: taskContextPrompts(session, task.id),
+      attachments: serializeAttachments(session),
+      grants: prospectiveGrants,
+      run,
+      approvalId,
+      decision,
+      model: settings.model,
+      reasoningEffort: settings.reasoningEffort
+    });
+
+    task.runs = [response.run];
+    task.updatedAt = Date.now();
+    session.lastUpdated = Date.now();
+    activeWorkspace.updatedAt = Date.now();
+    if (decision === 'approve') {
+      registerWorkspaceGrant(activeWorkspace, approval);
+    }
+    syncWorkspaceIndex(activeWorkspace);
+    saveAll();
+    applyContext();
+    setStatus(response.run.status === 'completed' ? 'Run updated after approval.' : 'Approval saved.');
+    setMetrics(`${response.run.latencyMs}ms approval update`);
+  } catch (error) {
+    setStatus(`Approval update failed: ${(error as Error).message}`);
+  }
+}
 
 function openSettings(): void {
   const settings = getSettings();
   settingsModelInput.value = settings.model;
   settingsReasoningSelect.value = settings.reasoningEffort;
   shortcutSendInput.value = settings.shortcuts.sendMessage;
-  shortcutNewThreadInput.value = settings.shortcuts.newThread;
+  shortcutNewSessionInput.value = settings.shortcuts.newSession;
   settingsModalEl.classList.remove('hidden');
 }
 
@@ -1282,13 +1182,18 @@ function saveSettings(): void {
   const model = settingsModelInput.value.trim();
   const reasoning = settingsReasoningSelect.value;
   const sendShortcut = shortcutSendInput.value.trim();
-  const newThreadShortcut = shortcutNewThreadInput.value.trim();
+  const newSessionShortcut = shortcutNewSessionInput.value.trim();
 
-  if (!model) { setStatus('Model is required.'); return; }
-  if (!parseShortcut(sendShortcut) || !parseShortcut(newThreadShortcut)) {
+  if (!model) {
+    setStatus('Model is required.');
+    return;
+  }
+
+  if (!parseShortcut(sendShortcut) || !parseShortcut(newSessionShortcut)) {
     setStatus('Invalid shortcut format. Use e.g. Meta+Enter.');
     return;
   }
+
   if (reasoning !== 'low' && reasoning !== 'medium' && reasoning !== 'high' && reasoning !== 'xhigh') {
     setStatus('Invalid reasoning effort setting.');
     return;
@@ -1297,7 +1202,10 @@ function saveSettings(): void {
   appState.settings = {
     model,
     reasoningEffort: reasoning,
-    shortcuts: { sendMessage: sendShortcut, newThread: newThreadShortcut }
+    shortcuts: {
+      sendMessage: sendShortcut,
+      newSession: newSessionShortcut
+    }
   };
 
   updateRuntimeChips();
@@ -1307,86 +1215,113 @@ function saveSettings(): void {
   void refreshAuthStatus(false);
 }
 
-// ── Event Handlers ────────────────────────────────────────────────
-
 function attachEventHandlers(): void {
   attachFileButton.addEventListener('click', () => fileInput.click());
-  addDocumentButton.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => { void handleFileAttach(); });
-  sendButton.addEventListener('click', () => { void sendPrompt(); });
-
-  // Project list delegation
-  projectListEl.addEventListener('click', (event) => {
-    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
-    if (!target) return;
-
-    const action = target.getAttribute('data-action');
-    const projectId = target.getAttribute('data-project-id') ?? '';
-    const threadId = target.getAttribute('data-thread-id') ?? '';
-
-    if (action === 'switch-project') { void switchToProject(projectId); return; }
-    if (action === 'new-thread') { createProjectThread(projectId); return; }
-    if (action === 'switch-thread') { switchProjectThread(projectId, threadId); return; }
-    if (action === 'delete-thread') { void deleteProjectThread(projectId, threadId); return; }
-    if (action === 'delete-project') { void deleteProject(projectId); return; }
+  addAttachmentButton.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    void attachFilesToCurrentSession(fileInput.files);
+    fileInput.value = '';
+  });
+  sendButton.addEventListener('click', () => {
+    void sendPrompt();
   });
 
-  // Standalone thread list delegation
-  threadListEl.addEventListener('click', (event) => {
-    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
-    if (!target) return;
-
-    const action = target.getAttribute('data-action');
-    const threadId = target.getAttribute('data-thread-id') ?? '';
-
-    if (action === 'switch-thread') { switchToStandaloneThread(threadId); return; }
-    if (action === 'delete-thread') { void deleteStandaloneThread(threadId); return; }
+  promptInput.addEventListener('input', () => {
+    promptInput.style.height = 'auto';
+    promptInput.style.height = `${promptInput.scrollHeight}px`;
   });
 
-  // Document chips delegation
-  documentChipsEl.addEventListener('click', (event) => {
+  workspaceListEl.addEventListener('click', (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!target) return;
 
     const action = target.getAttribute('data-action');
-    const docId = target.getAttribute('data-doc-id') ?? '';
-
-    if (action === 'select-doc') {
-      setActiveDocumentId(docId);
-      saveAll();
-      applyContext();
-      if (!documentCache.has(docId)) void loadAndCacheDocument(docId);
+    const workspaceId = target.getAttribute('data-workspace-id') ?? '';
+    if (action === 'switch-workspace') {
+      void switchToWorkspace(workspaceId);
       return;
     }
-
-    if (action === 'remove-doc') {
-      const storedName = target.getAttribute('data-stored') ?? '';
-      void removeDocument(docId, storedName);
+    if (action === 'new-session') {
+      if (!activeWorkspace || activeWorkspace.id !== workspaceId) {
+        void switchToWorkspace(workspaceId).then(() => createSession(workspaceId));
+      } else {
+        createSession(workspaceId);
+      }
+      return;
+    }
+    if (action === 'delete-workspace') {
+      void deleteWorkspace(workspaceId);
     }
   });
 
-  newProjectButton.addEventListener('click', () => { void createProject(); });
-  newThreadButton.addEventListener('click', () => createStandaloneThread());
+  sessionListEl.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+
+    const action = target.getAttribute('data-action');
+    const sessionId = target.getAttribute('data-session-id') ?? '';
+    if (action === 'switch-session') {
+      switchSession(sessionId);
+      return;
+    }
+    if (action === 'delete-session') {
+      void deleteSession(sessionId);
+    }
+  });
+
+  attachmentChipsEl.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+
+    const action = target.getAttribute('data-action');
+    if (action !== 'remove-attachment') return;
+    const attachmentId = target.getAttribute('data-attachment-id') ?? '';
+    const storedFileName = target.getAttribute('data-stored-file') ?? '';
+    void removeAttachment(attachmentId, storedFileName);
+  });
+
+  taskFeedEl.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+
+    if (target.getAttribute('data-action') !== 'resolve-approval') return;
+    const taskId = target.getAttribute('data-task-id') ?? '';
+    const approvalId = target.getAttribute('data-approval-id') ?? '';
+    const decision = (target.getAttribute('data-decision') ?? 'deny') as 'approve' | 'deny';
+    void resolveApproval(taskId, approvalId, decision);
+  });
+
+  newWorkspaceButton.addEventListener('click', () => {
+    void createWorkspace();
+  });
+  newSessionButton.addEventListener('click', () => {
+    if (activeWorkspace) createSession(activeWorkspace.id);
+  });
   openSettingsButton.addEventListener('click', () => openSettings());
   closeSettingsButton.addEventListener('click', () => closeSettings());
   saveSettingsButton.addEventListener('click', () => saveSettings());
-  recheckAuthButton.addEventListener('click', () => { void refreshAuthStatus(true); });
+  recheckAuthButton.addEventListener('click', () => {
+    void refreshAuthStatus(true);
+  });
 
-  // Confirm dialog
   confirmCancelButton.addEventListener('click', () => closeConfirm(false));
   confirmOkButton.addEventListener('click', () => closeConfirm(true));
   confirmModalEl.addEventListener('click', (event) => {
     if (event.target === confirmModalEl) closeConfirm(false);
   });
-
   settingsModalEl.addEventListener('click', (event) => {
     if (event.target === settingsModalEl) closeSettings();
   });
 
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      if (!confirmModalEl.classList.contains('hidden')) { closeConfirm(false); return; }
-      if (!settingsModalEl.classList.contains('hidden')) { closeSettings(); return; }
+      if (!confirmModalEl.classList.contains('hidden')) {
+        closeConfirm(false);
+        return;
+      }
+      if (!settingsModalEl.classList.contains('hidden')) {
+        closeSettings();
+      }
       return;
     }
 
@@ -1399,18 +1334,14 @@ function attachEventHandlers(): void {
       return;
     }
 
-    if (shortcutMatches(event, settings.shortcuts.newThread)) {
+    if (shortcutMatches(event, settings.shortcuts.newSession)) {
       event.preventDefault();
-      if (activeContext.kind === 'project') {
-        createProjectThread(activeContext.projectId);
-      } else {
-        createStandaloneThread();
+      if (activeWorkspace) {
+        createSession(activeWorkspace.id);
       }
     }
   });
 }
-
-// ── Boot ──────────────────────────────────────────────────────────
 
 async function boot(): Promise<void> {
   attachEventHandlers();
@@ -1418,14 +1349,12 @@ async function boot(): Promise<void> {
   setMetrics('');
 
   const api = await resolveDesktopApi();
-
-  // Step 1: Try to load persisted app state
   let loadedState: AppState | null = null;
+
   if (api?.loadAppState) {
     loadedState = await api.loadAppState();
   }
 
-  // Step 2: Check for legacy localStorage data
   if (!loadedState) {
     const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (legacyRaw && api?.migrateLegacyState) {
@@ -1437,90 +1366,50 @@ async function boot(): Promise<void> {
           localStorage.removeItem(LEGACY_STORAGE_KEY);
         }
       } catch (error) {
-        console.error('[document-pilot] migration failed:', error);
+        console.error('[cowork] migration failed:', error);
       }
     }
   }
 
-  // Step 3: Create fresh state if nothing was loaded
   if (!loadedState) {
-    const projectId = uid('project');
-    const threadId = uid('thread');
-    const now = Date.now();
-
+    activeWorkspace = createDefaultWorkspace();
     loadedState = {
-      projectIndex: [{ id: projectId, name: 'Document Pilot', updatedAt: now }],
-      threads: [],
-      activeProjectId: projectId,
-      activeThreadId: threadId,
+      workspaceIndex: [{ id: activeWorkspace.id, name: activeWorkspace.name, updatedAt: activeWorkspace.updatedAt }],
+      activeWorkspaceId: activeWorkspace.id,
+      activeSessionId: activeWorkspace.sessions[0]?.id ?? null,
       settings: { ...DEFAULT_SETTINGS }
     };
-
-    // Also create the project file on disk
-    const freshProject: ProjectMetadata = {
-      id: projectId,
-      name: 'Document Pilot',
-      documents: [],
-      threads: [{
-        id: threadId,
-        title: 'New Thread',
-        messages: [],
-        documents: [],
-        activeDocumentId: null,
-        lastUpdated: now
-      }],
-      createdAt: now,
-      updatedAt: now
-    };
-
-    activeProject = freshProject;
-    if (api?.saveProject) api.saveProject({ project: freshProject }).catch(() => {});
+    if (api?.saveWorkspace) {
+      api.saveWorkspace({ workspace: activeWorkspace }).catch(() => undefined);
+    }
   }
 
   appState = loadedState;
 
-  // Step 4: Restore active context
-  if (appState.activeProjectId) {
-    const projectId = appState.activeProjectId;
-    if (api?.loadProject) {
-      const { project } = await api.loadProject({ projectId });
-      activeProject = project;
-    }
+  if (appState.activeWorkspaceId && api?.loadWorkspace) {
+    const { workspace } = await api.loadWorkspace({ workspaceId: appState.activeWorkspaceId });
+    activeWorkspace = workspace;
+  }
 
-    if (activeProject) {
-      const threadId = appState.activeThreadId && activeProject.threads.some((t) => t.id === appState!.activeThreadId)
-        ? appState.activeThreadId
-        : activeProject.threads[0]?.id ?? '';
-      activeContext = { kind: 'project', projectId, threadId };
-      appState.activeThreadId = threadId;
-    } else {
-      // Project file is missing, fall back
-      if (appState.threads.length > 0) {
-        activeContext = { kind: 'thread', threadId: appState.threads[0].id };
-      } else {
-        // Create a fresh project
-        const projectId2 = uid('project');
-        const threadId2 = uid('thread');
-        const now = Date.now();
-        appState.projectIndex = [{ id: projectId2, name: 'Document Pilot', updatedAt: now }];
-        appState.activeProjectId = projectId2;
-        appState.activeThreadId = threadId2;
-        activeProject = {
-          id: projectId2, name: 'Document Pilot', documents: [],
-          threads: [{ id: threadId2, title: 'New Thread', messages: [], documents: [], activeDocumentId: null, lastUpdated: now }],
-          createdAt: now, updatedAt: now
-        };
-        activeContext = { kind: 'project', projectId: projectId2, threadId: threadId2 };
-        if (api?.saveProject) api.saveProject({ project: activeProject }).catch(() => {});
-      }
+  if (!activeWorkspace && appState.workspaceIndex.length > 0 && api?.loadWorkspace) {
+    const { workspace } = await api.loadWorkspace({ workspaceId: appState.workspaceIndex[0].id });
+    activeWorkspace = workspace;
+    appState.activeWorkspaceId = workspace?.id ?? null;
+  }
+
+  if (!activeWorkspace) {
+    activeWorkspace = createDefaultWorkspace();
+    syncWorkspaceIndex(activeWorkspace);
+    appState.activeWorkspaceId = activeWorkspace.id;
+    appState.activeSessionId = activeWorkspace.sessions[0]?.id ?? null;
+    if (api?.saveWorkspace) {
+      api.saveWorkspace({ workspace: activeWorkspace }).catch(() => undefined);
     }
-  } else if (appState.threads.length > 0) {
-    const threadId = appState.activeThreadId && appState.threads.some((t) => t.id === appState!.activeThreadId)
-      ? appState.activeThreadId
-      : appState.threads[0].id;
-    activeContext = { kind: 'thread', threadId };
-  } else if (appState.projectIndex.length > 0) {
-    void switchToProject(appState.projectIndex[0].id);
+  }
+
+  const activeSessionId = appState.activeSessionId;
+  if (!activeSessionId || !activeWorkspace.sessions.some((session) => session.id === activeSessionId)) {
+    appState.activeSessionId = activeWorkspace.sessions[0]?.id ?? null;
   }
 
   void saveAppState();
@@ -1528,12 +1417,6 @@ async function boot(): Promise<void> {
   applyContext();
   setStatus('Checking GitHub authentication...');
   void refreshAuthStatus(false);
-
-  // Pre-load active document
-  const activeDocId = getActiveDocumentId();
-  if (activeDocId && !documentCache.has(activeDocId)) {
-    void loadAndCacheDocument(activeDocId);
-  }
 }
 
-boot();
+void boot();

@@ -1,47 +1,51 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
-  ChatRequest,
-  ChatResponse,
   CopilotAuthStatusRequest,
   CopilotAuthStatusResponse,
   AppState,
   SaveAppStateRequest,
-  LoadProjectRequest,
-  LoadProjectResponse,
-  SaveProjectRequest,
-  CopyDocumentRequest,
-  CopyDocumentResponse,
-  ReadDocumentRequest,
-  ReadDocumentResponse,
-  DeleteDocumentRequest,
-  DeleteProjectRequest,
+  LoadWorkspaceRequest,
+  LoadWorkspaceResponse,
+  SaveWorkspaceRequest,
+  CopyAttachmentRequest,
+  CopyAttachmentResponse,
+  ReadAttachmentRequest,
+  ReadAttachmentResponse,
+  DeleteAttachmentRequest,
+  DeleteWorkspaceRequest,
   MigrateStateRequest,
-  MigrateStateResponse
+  MigrateStateResponse,
+  ResolveApprovalRequest,
+  ResolveApprovalResponse,
+  StartRunRequest,
+  StartRunResponse
 } from '../shared/contracts.js';
 
 const api = {
-  chat: (payload: ChatRequest): Promise<ChatResponse> =>
-    ipcRenderer.invoke('chat', payload),
+  startRun: (payload: StartRunRequest): Promise<StartRunResponse> =>
+    ipcRenderer.invoke('start-run', payload),
+  resolveApproval: (payload: ResolveApprovalRequest): Promise<ResolveApprovalResponse> =>
+    ipcRenderer.invoke('resolve-approval', payload),
   getCopilotAuthStatus: (payload: CopilotAuthStatusRequest): Promise<CopilotAuthStatusResponse> =>
     ipcRenderer.invoke('get-copilot-auth-status', payload),
 
-  // Project storage
+  // Workspace storage
   loadAppState: (): Promise<AppState | null> =>
     ipcRenderer.invoke('load-app-state'),
   saveAppState: (payload: SaveAppStateRequest): Promise<void> =>
     ipcRenderer.invoke('save-app-state', payload),
-  loadProject: (payload: LoadProjectRequest): Promise<LoadProjectResponse> =>
-    ipcRenderer.invoke('load-project', payload),
-  saveProject: (payload: SaveProjectRequest): Promise<void> =>
-    ipcRenderer.invoke('save-project', payload),
-  deleteProject: (payload: DeleteProjectRequest): Promise<void> =>
-    ipcRenderer.invoke('delete-project', payload),
-  copyDocument: (payload: CopyDocumentRequest): Promise<CopyDocumentResponse> =>
-    ipcRenderer.invoke('copy-document', payload),
-  readDocument: (payload: ReadDocumentRequest): Promise<ReadDocumentResponse> =>
-    ipcRenderer.invoke('read-document', payload),
-  deleteDocument: (payload: DeleteDocumentRequest): Promise<void> =>
-    ipcRenderer.invoke('delete-document', payload),
+  loadWorkspace: (payload: LoadWorkspaceRequest): Promise<LoadWorkspaceResponse> =>
+    ipcRenderer.invoke('load-workspace', payload),
+  saveWorkspace: (payload: SaveWorkspaceRequest): Promise<void> =>
+    ipcRenderer.invoke('save-workspace', payload),
+  deleteWorkspace: (payload: DeleteWorkspaceRequest): Promise<void> =>
+    ipcRenderer.invoke('delete-workspace', payload),
+  copyAttachment: (payload: CopyAttachmentRequest): Promise<CopyAttachmentResponse> =>
+    ipcRenderer.invoke('copy-attachment', payload),
+  readAttachment: (payload: ReadAttachmentRequest): Promise<ReadAttachmentResponse> =>
+    ipcRenderer.invoke('read-attachment', payload),
+  deleteAttachment: (payload: DeleteAttachmentRequest): Promise<void> =>
+    ipcRenderer.invoke('delete-attachment', payload),
   migrateLegacyState: (payload: MigrateStateRequest): Promise<MigrateStateResponse> =>
     ipcRenderer.invoke('migrate-legacy-state', payload)
 };

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm run typecheck:*)",
       "WebSearch",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

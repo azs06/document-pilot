@@ -5,80 +5,114 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
-    <title>Document Pilot</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Cowork Desktop</title>
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">DP</span>
+          <img src="./assets/icon.png" alt="Cowork Logo" class="brand-logo" />
           <div>
-            <h1>Document Pilot</h1>
-            <p>Agent Workspace</p>
+            <h1>Cowork</h1>
+            <p>Desktop AI coworker</p>
           </div>
         </div>
 
-        <div class="sidebar-actions">
-          <button id="new-project" type="button" class="ghost">New Project</button>
-          <button id="new-thread" type="button" class="ghost">New Thread</button>
-        </div>
+        <nav class="sidebar-actions">
+          <button id="new-workspace" type="button" class="sidebar-nav-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+            <span>New Workspace</span>
+          </button>
+          <button id="new-session" type="button" class="sidebar-nav-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            <span>New Session</span>
+          </button>
+        </nav>
 
         <div class="section-head">
-          <span>Projects</span>
+          <span>Workspaces</span>
         </div>
-        <div id="project-list" class="project-list"></div>
+        <div id="workspace-list" class="nav-list"></div>
 
         <div class="section-head">
-          <span>Threads</span>
+          <span>Recents</span>
         </div>
-        <div id="thread-list" class="project-list"></div>
+        <div id="session-list" class="nav-list compact"></div>
 
-        <button id="open-settings" type="button" class="ghost sidebar-settings-btn">Settings</button>
+        <div class="section-head">
+          <span>Built-In</span>
+        </div>
+        <div class="capability-list">
+          <div class="capability-card">
+            <strong>Local files</strong>
+            <span>Read, preview, organize, and stage edits with approvals.</span>
+          </div>
+          <div class="capability-card">
+            <strong>Document studio</strong>
+            <span>Draft reports, spreadsheets, decks, and polished exports.</span>
+          </div>
+          <div class="capability-card">
+            <strong>Research + plugins</strong>
+            <span>Web research, Gmail, Google Drive, and future connector bundles.</span>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <button id="open-settings" type="button" class="sidebar-nav-btn sidebar-settings-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Settings</span>
+          </button>
+          <p class="sidebar-footer-hint">Sessions run locally on your computer.</p>
+        </div>
       </aside>
 
       <main class="workspace">
         <header class="workspace-head">
           <div>
-            <h2 id="thread-title">New Thread</h2>
-            <p id="thread-subtitle">Start by attaching a file and asking a question.</p>
+            <h2 id="session-title">New Session</h2>
+            <p id="session-subtitle">Delegate a task, review the plan, and approve sensitive steps.</p>
           </div>
-          <div class="runtime-indicator" id="runtime-indicator">Model: gpt-5-mini | Reasoning: high</div>
+          <div class="workspace-head-meta">
+            <div class="runtime-indicator" id="runtime-indicator">Model: gpt-5-mini | Reasoning: high</div>
+            <div class="grant-indicator" id="grant-indicator">0 grants</div>
+          </div>
         </header>
 
-        <div id="document-bar" class="document-bar hidden">
-          <span class="document-bar-label">Documents:</span>
-          <div id="document-chips" class="document-chips"></div>
-          <button id="add-document" type="button" class="ghost ghost-sm">+ Add</button>
-        </div>
-
-        <section id="chat-log" class="chat-log" aria-live="polite"></section>
+        <section id="attachment-bar" class="attachment-bar hidden">
+          <span class="attachment-bar-label">Context files</span>
+          <div id="attachment-chips" class="attachment-chips"></div>
+          <button id="add-attachment" type="button" class="ghost ghost-sm">+ Add</button>
+        </section>
 
         <section id="auth-gate" class="auth-gate hidden" aria-live="polite">
-          <h3>GitHub Login Required</h3>
+          <h3>GitHub Copilot Login Required</h3>
           <p id="auth-message">Checking authentication...</p>
           <p class="auth-hint">
-            To continue, sign in with GitHub Copilot in your terminal (for example: <code>copilot auth login</code>), then click
-            recheck.
+            Sign in through the terminal, for example with <code>copilot auth login</code>, then recheck.
           </p>
           <button id="recheck-auth" type="button" class="primary">Recheck Login</button>
         </section>
 
+        <section id="task-feed" class="task-feed" aria-live="polite"></section>
+
         <footer class="composer">
           <div class="composer-top">
-            <input
-              id="file-input"
-              type="file"
-              accept=".csv,.xlsx,.xlsm,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              hidden
-            />
-            <button id="attach-file" type="button" class="ghost">Attach File</button>
-            <span id="file-chip" class="file-chip">No file attached</span>
+            <input id="file-input" type="file" multiple hidden />
+            <button id="attach-file" type="button" class="ghost">Add Files</button>
+            <span id="file-chip" class="file-chip">No attachments</span>
             <span id="status" class="status">Ready.</span>
           </div>
 
-          <label class="sr-only" for="prompt">Prompt</label>
-          <textarea id="prompt" rows="4" placeholder="Ask about the attached file..."></textarea>
+          <label class="sr-only" for="prompt">Task</label>
+          <textarea
+            id="prompt"
+            rows="4"
+            placeholder="Describe what you want Cowork to do on your computer..."
+          ></textarea>
 
           <div class="composer-bottom">
             <div class="composer-config">
@@ -86,7 +120,7 @@
               <span id="reasoning-chip" class="chip">Reasoning: high</span>
             </div>
             <div id="metrics" class="metrics"></div>
-            <button id="send" type="button" class="primary">Send</button>
+            <button id="send" type="button" class="primary">Delegate <span class="kbd-hint">⌘↵</span></button>
           </div>
         </footer>
       </main>
@@ -119,14 +153,14 @@
         <section>
           <h4>Keyboard Shortcuts</h4>
           <label class="field">
-            <span>Send Message</span>
+            <span>Send Task</span>
             <input id="shortcut-send" type="text" value="Meta+Enter" />
           </label>
           <label class="field">
-            <span>New Thread</span>
-            <input id="shortcut-new-thread" type="text" value="Meta+Shift+N" />
+            <span>New Session</span>
+            <input id="shortcut-new-session" type="text" value="Meta+Shift+N" />
           </label>
-          <p class="hint">Use Mac-style shortcuts (Meta, Shift, Alt, Ctrl + Key).</p>
+          <p class="hint">Use Mac-style shortcuts such as Meta+Enter.</p>
         </section>
 
         <footer>

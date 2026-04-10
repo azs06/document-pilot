@@ -1,38 +1,43 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type {
-  ChatRequest,
   CopilotAuthStatusRequest,
+  CopyAttachmentRequest,
+  DeleteAttachmentRequest,
+  DeleteWorkspaceRequest,
+  LoadWorkspaceRequest,
   SaveAppStateRequest,
-  LoadProjectRequest,
-  SaveProjectRequest,
-  CopyDocumentRequest,
-  ReadDocumentRequest,
-  DeleteDocumentRequest,
-  DeleteProjectRequest,
-  MigrateStateRequest
+  MigrateStateRequest,
+  ReadAttachmentRequest,
+  ResolveApprovalRequest,
+  SaveWorkspaceRequest,
+  StartRunRequest
 } from '../shared/contracts.js';
-import { CopilotChat } from './copilotChat.js';
+import { CopilotRuntime } from './copilotChat.js';
 import { ProjectStorage } from './projectStorage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const APP_ICON_PATH = path.join(__dirname, '../../build/icon.png');
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 }
 
-const chat = new CopilotChat();
+const runtime = new CopilotRuntime();
 const storage = new ProjectStorage();
 
 function createWindow(): BrowserWindow {
+  const iconExists = fs.existsSync(APP_ICON_PATH) && fs.statSync(APP_ICON_PATH).size > 0;
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 980,
     minHeight: 720,
+    ...(iconExists ? { icon: APP_ICON_PATH } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -64,12 +69,15 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-ipcMain.handle('chat', async (_event, payload: ChatRequest) => chat.chat(payload));
+ipcMain.handle('start-run', async (_event, payload: StartRunRequest) => runtime.startRun(payload));
+ipcMain.handle('resolve-approval', async (_event, payload: ResolveApprovalRequest) =>
+  runtime.resolveApproval(payload)
+);
 ipcMain.handle('get-copilot-auth-status', async (_event, payload: CopilotAuthStatusRequest) =>
-  chat.getCopilotAuthStatus(payload)
+  runtime.getCopilotAuthStatus(payload)
 );
 
-// ── Project Storage IPC ───────────────────────────────────────────
+// ── Workspace Storage IPC ─────────────────────────────────────────
 
 ipcMain.handle('load-app-state', async () => storage.loadAppState());
 
@@ -77,34 +85,39 @@ ipcMain.handle('save-app-state', (_event, payload: SaveAppStateRequest) => {
   storage.saveAppState(payload.state);
 });
 
-ipcMain.handle('load-project', async (_event, payload: LoadProjectRequest) => ({
-  project: await storage.loadProject(payload.projectId)
+ipcMain.handle('load-workspace', async (_event, payload: LoadWorkspaceRequest) => ({
+  workspace: await storage.loadWorkspace(payload.workspaceId)
 }));
 
-ipcMain.handle('save-project', (_event, payload: SaveProjectRequest) => {
-  storage.saveProject(payload.project);
+ipcMain.handle('save-workspace', (_event, payload: SaveWorkspaceRequest) => {
+  storage.saveWorkspace(payload.workspace);
 });
 
-ipcMain.handle('delete-project', async (_event, payload: DeleteProjectRequest) => {
-  await storage.deleteProject(payload.projectId);
+ipcMain.handle('delete-workspace', async (_event, payload: DeleteWorkspaceRequest) => {
+  await storage.deleteWorkspace(payload.workspaceId);
 });
 
-ipcMain.handle('copy-document', async (_event, payload: CopyDocumentRequest) => ({
-  storedDocument: await storage.copyDocument(
+ipcMain.handle('copy-attachment', async (_event, payload: CopyAttachmentRequest) => ({
+  attachment: await storage.copyAttachment(
     payload.targetId,
-    payload.documentId,
+    payload.attachmentId,
     payload.originalFileName,
+    payload.mimeType,
     Buffer.from(payload.fileData)
   )
 }));
 
-ipcMain.handle('read-document', async (_event, payload: ReadDocumentRequest) => {
-  const result = await storage.readDocument(payload.targetId, payload.storedFileName);
-  return { fileData: result.fileData.buffer, originalFileName: result.originalFileName, kind: result.kind };
+ipcMain.handle('read-attachment', async (_event, payload: ReadAttachmentRequest) => {
+  const result = await storage.readAttachment(payload.targetId, payload.storedFileName);
+  return {
+    fileData: result.fileData.buffer,
+    originalFileName: result.originalFileName,
+    mimeType: result.mimeType
+  };
 });
 
-ipcMain.handle('delete-document', async (_event, payload: DeleteDocumentRequest) => {
-  await storage.deleteDocument(payload.targetId, payload.storedFileName);
+ipcMain.handle('delete-attachment', async (_event, payload: DeleteAttachmentRequest) => {
+  await storage.deleteAttachment(payload.targetId, payload.storedFileName);
 });
 
 ipcMain.handle('migrate-legacy-state', async (_event, payload: MigrateStateRequest) => {
@@ -121,6 +134,16 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  try {
+    const iconExists = fs.existsSync(APP_ICON_PATH) && fs.statSync(APP_ICON_PATH).size > 0;
+    console.log(`[main] App icon path: ${APP_ICON_PATH} (exists: ${iconExists})`);
+    if (iconExists && process.platform === 'darwin') {
+      app.dock?.setIcon(APP_ICON_PATH);
+    }
+  } catch (err) {
+    console.warn('[main] Failed to set dock icon:', err);
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -136,5 +159,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async () => {
   await storage.flush();
-  await chat.stop();
+  await runtime.stop();
 });
